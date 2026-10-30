@@ -30,36 +30,46 @@ public class StalwartSCIMProvisioningConnectorFactory extends AbstractProvisioni
 
     @Override
     public List<Property> getConfigurationProperties() {
-        List<Property> properties = new ArrayList<>();
-        properties.add(property(StalwartSCIMProvisioningConnectorConstants.BASE_URL,
-                "Stalwart SCIM Base URL", "https://mail.example.com/scim/v2", true, false, 1));
-        properties.add(property(StalwartSCIMProvisioningConnectorConstants.BEARER_TOKEN,
-                "Stalwart SCIM Bearer Token", null, true, true, 2));
-        properties.add(property(StalwartSCIMProvisioningConnectorConstants.USERSTORE_DOMAIN,
-                "User Store Domain", null, false, false, 3));
+        System.out.println(">>> STALWART-SCIM getConfigurationProperties() called");
+        try {
+            List<Property> properties = new ArrayList<>();
+            properties.add(property(StalwartSCIMProvisioningConnectorConstants.BASE_URL,
+                    "Stalwart SCIM Base URL", "https://mail.example.com/scim/v2", true, false, 1));
+            properties.add(property(StalwartSCIMProvisioningConnectorConstants.BEARER_TOKEN,
+                    "Stalwart SCIM Bearer Token", null, true, true, 2));
+            properties.add(property(StalwartSCIMProvisioningConnectorConstants.USERSTORE_DOMAIN,
+                    "User Store Domain", null, false, false, 3));
 
-        Property enabled = property(StalwartSCIMProvisioningConnectorConstants.ENABLE_CLAIM_MAPPING,
-                "Enable Claim Mapping", "true", false, false, 4);
-        enabled.setType("boolean");
-        properties.add(enabled);
+            Property enabled = property(StalwartSCIMProvisioningConnectorConstants.ENABLE_CLAIM_MAPPING,
+                    "Enable Claim Mapping", "true", false, false, 4);
+            enabled.setType("boolean");
+            properties.add(enabled);
 
-        properties.add(property(StalwartSCIMProvisioningConnectorConstants.USERNAME_CLAIM_URI,
-                "userName source WSO2 local claim URI", "http://wso2.org/claims/emailaddress", true, false, 5));
-        properties.add(property(StalwartSCIMProvisioningConnectorConstants.EXTERNAL_ID_CLAIM_URI,
-                "externalId source WSO2 local claim URI", "http://wso2.org/claims/username", false, false, 6));
-        properties.add(property(StalwartSCIMProvisioningConnectorConstants.GIVEN_NAME_CLAIM_URI,
-                "name.givenName source WSO2 local claim URI", "http://wso2.org/claims/givenname", false, false, 7));
-        properties.add(property(StalwartSCIMProvisioningConnectorConstants.FAMILY_NAME_CLAIM_URI,
-                "name.familyName source WSO2 local claim URI", "http://wso2.org/claims/lastname", false, false, 8));
-        properties.add(property(StalwartSCIMProvisioningConnectorConstants.ACTIVE_CLAIM_URI,
-                "active source WSO2 local Boolean claim URI (optional)", "", false, false, 9));
-        properties.add(property(StalwartSCIMProvisioningConnectorConstants.EMAIL_ALIASES_CLAIM_URI,
-                "Optional multi-valued WSO2 local claim URI for additional email aliases", "", false, false, 10));
-        Property invertActive = property(StalwartSCIMProvisioningConnectorConstants.INVERT_ACTIVE_CLAIM,
-                "Invert active source value (for accountDisabled)", "false", false, false, 11);
-        invertActive.setType("boolean");
-        properties.add(invertActive);
-        return properties;
+            properties.add(property(StalwartSCIMProvisioningConnectorConstants.USERNAME_CLAIM_URI,
+                    "userName source WSO2 local claim URI", "http://wso2.org/claims/emailaddress", true, false, 5));
+            properties.add(property(StalwartSCIMProvisioningConnectorConstants.EXTERNAL_ID_CLAIM_URI,
+                    "externalId source WSO2 local claim URI", "http://wso2.org/claims/username", false, false, 6));
+            properties.add(property(StalwartSCIMProvisioningConnectorConstants.GIVEN_NAME_CLAIM_URI,
+                    "name.givenName source WSO2 local claim URI", "http://wso2.org/claims/givenname", false, false, 7));
+            properties.add(property(StalwartSCIMProvisioningConnectorConstants.FAMILY_NAME_CLAIM_URI,
+                    "name.familyName source WSO2 local claim URI", "http://wso2.org/claims/lastname", false, false, 8));
+            properties.add(property(StalwartSCIMProvisioningConnectorConstants.ACTIVE_CLAIM_URI,
+                    "active source WSO2 local Boolean claim URI (optional)", "", false, false, 9));
+            properties.add(property(StalwartSCIMProvisioningConnectorConstants.EMAIL_ALIASES_CLAIM_URI,
+                    "Optional multi-valued WSO2 local claim URI for additional email aliases", "", false, false, 10));
+            Property invertActive = property(StalwartSCIMProvisioningConnectorConstants.INVERT_ACTIVE_CLAIM,
+                    "Invert active source value (for accountDisabled)", "false", false, false, 11);
+            invertActive.setType("boolean");
+            properties.add(invertActive);
+
+            System.out.println(">>> STALWART-SCIM getConfigurationProperties() returned "
+                    + properties.size() + " properties");
+            return properties;
+        } catch (RuntimeException | Error e) {
+            System.err.println(">>> STALWART-SCIM getConfigurationProperties() FAILED: " + e);
+            e.printStackTrace(System.err);
+            throw e;
+        }
     }
 
     private Property property(String name, String displayName, String defaultValue,
