@@ -29,7 +29,7 @@ Stalwart maps SCIM `active` to the account's `authenticate` permission. `active=
 
 ## Reliability and compatibility
 
-- JIT-marked entities are dispatched when the connector JIT setting is enabled.
+- JIT-originated entities are processed by the outbound connector; the JIT marker does not suppress outbound SCIM provisioning.
 - Repeated create events find an existing account and reconcile attributes and group memberships.
 - Unchanged replacement-only user PATCH operations are skipped after reading the current resource.
 - Bareword equality filter values are normalized to quoted SCIM strings.
