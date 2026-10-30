@@ -401,7 +401,7 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
             String path = operation.has("path") ? operation.get("path").getAsString() : "";
             JsonElement wanted = operation.get("value");
             JsonElement actual = current;
-            for (String segment : path.split("\\\\.")) {
+            for (String segment : path.split("\\.")) {
                 if (actual == null || !actual.isJsonObject() || !actual.getAsJsonObject().has(segment)) {
                     actual = null;
                     break;
@@ -594,7 +594,7 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
         java.util.regex.Matcher matcher = java.util.regex.Pattern
                 .compile("(?i)^([A-Za-z][A-Za-z0-9._-]*\\s+eq\\s+)(?!\\\")(.*)$")
                 .matcher(normalized);
-        if (matcher.matches()) normalized = matcher.group(1) + "\\\"" + escapeFilter(matcher.group(2).trim()) + "\\\"";
+        if (matcher.matches()) normalized = matcher.group(1) + "\"" + escapeFilter(matcher.group(2).trim()) + "\"";
         return normalized;
     }
 
