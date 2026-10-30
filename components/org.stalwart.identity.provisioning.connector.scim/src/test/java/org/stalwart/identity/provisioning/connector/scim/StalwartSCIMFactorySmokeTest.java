@@ -9,6 +9,8 @@ import java.util.Map;
 /**
  * Executable factory/configuration smoke test outside the OSGi runtime.
  * This does not claim to verify Declarative Services activation in WSO2.
+ * It intentionally runs with the Maven test classpath because the connector
+ * depends on WSO2 APIs that are not embedded in the distributable bundle.
  */
 public final class StalwartSCIMFactorySmokeTest {
 
@@ -74,7 +76,7 @@ public final class StalwartSCIMFactorySmokeTest {
         System.out.println("Connector type: " + factory.getConnectorType());
         System.out.println("Properties count: " + properties.size());
         System.out.println("Required claim mapping defaults: emailaddress -> userName, username -> externalId");
-        System.out.println("SMOKE TEST PASSED v1.0.7");
+        System.out.println("SMOKE TEST PASSED v1.0.8");
     }
 
     private static void assertDefault(Map<String, Property> properties, String name, String expected) {
