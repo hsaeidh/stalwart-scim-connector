@@ -1,0 +1,29 @@
+name: Build Stalwart SCIM Connector
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+      - name: Build OSGi bundle
+        run: mvn -B -ntp clean package
+      - name: Upload connector JAR
+        uses: actions/upload-artifact@v4
+        with:
+          name: stalwart-scim-connector-1.0.0
+          path: components/org.irisadc.identity.provisioning.connector.stalwart.scim/target/*.jar
+          if-no-files-found: error
+          retention-days: 30
