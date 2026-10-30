@@ -7,8 +7,8 @@ Independent outbound provisioning connector for WSO2 Identity Server 7.3.0 and S
 - Connector type: `stalwart-scim`
 - Bundle symbolic name: `org.irisadc.identity.provisioning.connector.stalwart.scim`
 - Java package: `org.irisadc.identity.provisioning.connector.stalwart.scim`
-- Version: `1.0.0`
-- WSO2 framework compatibility baseline: identity framework `5.15.7`, inbound SCIM common `5.1.3`, Charon `2.2.0`
+- Version: `1.0.1`
+- WSO2 framework compatibility baseline: identity framework `7.10.156`, matching the application-common and provisioning package exports observed in the target WSO2 IS 7.3.0 runtime.
 - The original WSO2 connector's lifecycle dispatch and framework integration were used as a reference. Its legacy SCIM 1.0 HTTP client is **not** used.
 
 ## Protocol implementation
@@ -42,7 +42,7 @@ The WSO2 connector configuration uses text fields for source claim URIs and a Bo
 
 ## Build
 
-GitHub Actions builds with Temurin JDK 21 and Maven. The resulting OSGi bundle is uploaded as a workflow artifact:
+GitHub Actions builds with Temurin JDK 21 and Maven. The resulting OSGi bundle is uploaded as a workflow artifact named `stalwart-scim-connector-1.0.1`:
 
 `components/org.irisadc.identity.provisioning.connector.stalwart.scim/target/*.jar`
 
@@ -58,7 +58,7 @@ Restart WSO2 IS and verify that the OSGi service component registers connector t
 
 ## Verification status and limitations
 
-Compilation is being checked in GitHub Actions. Runtime interoperability with a live Stalwart Enterprise server and the WSO2 IS 7.3.0 OSGi container remains to be integration-tested.
+The build validates compilation against the WSO2 identity framework artifacts matching the target runtime package exports. Runtime OSGi resolution, connector registration, and interoperability with a live Stalwart Enterprise server still require integration testing on the target WSO2 IS 7.3.0 instance.
 
 For group-member events supplied as group resources, the connector resolves each member first by `externalId`, then by `userName`. Verify that the source member values correspond to the configured WSO2 username/national-ID or email claims in your deployment. Stalwart group membership is represented by SCIM User resource IDs.
 
