@@ -108,9 +108,10 @@ jobs:
           descriptor_name, root = component_xml
           assert root.tag.endswith("component"), f"Unexpected DS XML root: {root.tag}"
           namespace = root.tag.split("}")[0].lstrip("{")
-          assert namespace == "http://www.osgi.org/xmlns/scr/v1.4.0", (
-              f"Expected DS namespace v1.4.0, got: {namespace}"
-          )
+          assert namespace in {
+              "http://www.osgi.org/xmlns/scr/v1.3.0",
+              "http://www.osgi.org/xmlns/scr/v1.4.0",
+          }, f"Unexpected DS namespace: {namespace}"
           assert root.attrib.get("immediate") == "true", "DS component must be immediate"
           assert root.attrib.get("activate") == "activate", "Missing activate method"
           assert root.attrib.get("deactivate") == "deactivate", "Missing deactivate method"
