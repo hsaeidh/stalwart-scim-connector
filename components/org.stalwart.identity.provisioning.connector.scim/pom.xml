@@ -4,7 +4,7 @@
   <parent>
     <groupId>org.stalwart.identity.provisioning</groupId>
     <artifactId>identity-outbound-provisioning-stalwart-scim</artifactId>
-    <version>1.0.5</version>
+    <version>1.0.6</version>
     <relativePath>../../pom.xml</relativePath>
   </parent>
   <artifactId>org.stalwart.identity.provisioning.connector.scim</artifactId>
