@@ -23,10 +23,21 @@ jobs:
           cache: maven
       - name: Build OSGi bundle
         run: mvn -B -ntp clean package
+      - name: Verify OSGi bundle metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          JAR=$(find components/org.irisadc.identity.provisioning.connector.stalwart.scim/target -maxdepth 1 -type f -name '*.jar' ! -name '*-sources.jar' | head -n 1)
+          test -n "$JAR"
+          MANIFEST=$(unzip -p "$JAR" META-INF/MANIFEST.MF | tr -d '\\r')
+          printf '%s\\n' "$MANIFEST" | grep -q '^Bundle-Version: 1.0.2'
+          printf '%s\\n' "$MANIFEST" | grep -q 'org.wso2.carbon.identity.provisioning'
+          printf '%s\\n' "$MANIFEST" | grep -q 'org.wso2.carbon.identity.application.common'
+          echo "Verified OSGi bundle: $JAR"
       - name: Upload connector JAR
         uses: actions/upload-artifact@v4
         with:
-          name: stalwart-scim-connector-1.0.1
+          name: stalwart-scim-connector-1.0.2
           path: components/org.irisadc.identity.provisioning.connector.stalwart.scim/target/*.jar
           if-no-files-found: error
           retention-days: 30
