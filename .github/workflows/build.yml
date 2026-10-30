@@ -30,9 +30,9 @@ jobs:
           JAR=$(find components/org.irisadc.identity.provisioning.connector.stalwart.scim/target -maxdepth 1 -type f -name '*.jar' ! -name '*-sources.jar' | head -n 1)
           test -n "$JAR"
           MANIFEST=$(unzip -p "$JAR" META-INF/MANIFEST.MF | tr -d '\\r')
-          printf '%s\\n' "$MANIFEST" | grep -q '^Bundle-Version: 1.0.2'
-          printf '%s\\n' "$MANIFEST" | grep -q 'org.wso2.carbon.identity.provisioning'
-          printf '%s\\n' "$MANIFEST" | grep -q 'org.wso2.carbon.identity.application.common'
+          printf '%s\\n' "$MANIFEST" | grep -q '^Bundle-Version: 1.0.2' <<< "$MANIFEST"
+          printf '%s\\n' "$MANIFEST" | grep -q 'org.wso2.carbon.identity.provisioning' <<< "$MANIFEST"
+          printf '%s\\n' "$MANIFEST" | grep -q 'org.wso2.carbon.identity.application.common' <<< "$MANIFEST"
           echo "Verified OSGi bundle: $JAR"
       - name: Upload connector JAR
         uses: actions/upload-artifact@v4
