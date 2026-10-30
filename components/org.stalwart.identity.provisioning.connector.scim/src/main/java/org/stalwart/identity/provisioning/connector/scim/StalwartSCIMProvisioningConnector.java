@@ -90,8 +90,6 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
                     case StalwartSCIMProvisioningConnectorConstants.EMAIL_ALIASES_CLAIM_URI -> emailAliasesClaimUri = value;
                     case StalwartSCIMProvisioningConnectorConstants.INVERT_ACTIVE_CLAIM ->
                             invertActiveClaim = Boolean.parseBoolean(value);
-                    case IdentityProvisioningConstants.JIT_PROVISIONING_ENABLED ->
-                            jitProvisioningEnabled = "1".equals(value) || Boolean.parseBoolean(value);
                     default -> log.debug("Ignoring unsupported Stalwart connector property: " + property.getName());
                 }
             }
@@ -110,11 +108,9 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
             return null;
         }
         if (entity.isJitProvisioning()) {
-            if (!isJitProvisioningEnabled()) {
-                log.debug("JIT provisioning event skipped: connector JIT setting is disabled.");
-                return null;
-            }
-            log.debug("JIT provisioning event accepted; executing outbound SCIM operation.");
+            // This is an outbound connector: the JIT marker describes the origin of the event,
+            // and must not suppress provisioning to the target SCIM service.
+            log.debug("JIT-originated event received; continuing outbound SCIM provisioning.");
         }
         if (entity.getEntityType() == ProvisioningEntityType.USER) {
             switch (entity.getOperation()) {
