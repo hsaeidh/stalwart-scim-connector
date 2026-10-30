@@ -54,10 +54,24 @@ jobs:
           version = attributes.get("Bundle-Version", "")
           imports = attributes.get("Import-Package", "")
           service_component = attributes.get("Service-Component", "")
-          assert version.startswith("1.0.6"), f"Unexpected Bundle-Version: {version!r}"
+          require_capability = attributes.get("Require-Capability", "")
+          assert version.startswith("1.0.7"), f"Unexpected Bundle-Version: {version!r}"
+          expected_extender = 'osgi.extender;filter:="(&(osgi.extender=osgi.component)(version>=1.3.0)(!(version>=2.0.0)))"'
+          expected_ee = 'osgi.ee;filter:="(&(osgi.ee=JavaSE)(version>=21))"'
+          assert expected_extender in require_capability, (
+              "Missing/wrong osgi.extender requirement; Declarative Services SCR may not process this bundle. "
+              f"Require-Capability={require_capability!r}"
+          )
+          assert expected_ee in require_capability, (
+              "Missing/wrong JavaSE >=21 requirement. "
+              f"Require-Capability={require_capability!r}"
+          )
           assert "org.wso2.carbon.identity.provisioning" in imports, "Missing WSO2 provisioning package import"
           assert "org.wso2.carbon.identity.application.common" in imports, "Missing WSO2 application.common package import"
           assert service_component, "Missing Service-Component manifest header"
+          assert "OSGI-INF/" in service_component and ".xml" in service_component, (
+              f"Service-Component does not reference the generated DS descriptor: {service_component!r}"
+          )
 
           ds_files = [name for name in names if name.startswith("OSGI-INF/") and name.endswith(".xml")]
           assert ds_files, "No OSGI-INF Declarative Services XML was generated"
@@ -73,13 +87,14 @@ jobs:
           assert root.attrib.get("deactivate") == "deactivate", f"Unexpected deactivate method in {descriptor_name}"
           print(f"Verified {jar}: Bundle-Version={version}")
           print(f"Verified Service-Component: {service_component}")
+          print(f"Verified Require-Capability: {require_capability}")
           print(f"Verified DS descriptor: {descriptor_name}")
           print("Verified WSO2 Import-Package entries.")
           PY
       - name: Upload connector JAR
         uses: actions/upload-artifact@v4
         with:
-          name: stalwart-scim-connector-1.0.6
+          name: stalwart-scim-connector-1.0.7
           path: components/org.stalwart.identity.provisioning.connector.scim/target/*.jar
           if-no-files-found: error
           retention-days: 30
