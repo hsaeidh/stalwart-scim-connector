@@ -97,8 +97,21 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
         if (StringUtils.isBlank(baseUrl) || StringUtils.isBlank(bearerToken)) {
             throw new IdentityProvisioningException("Stalwart SCIM base URL and bearer token are required.");
         }
-        if (!baseUrl.endsWith("/scim/v2")) {
-            throw new IdentityProvisioningException("Base URL must end with /scim/v2, for example https://mail.example.com/scim/v2");
+        URI endpoint;
+        try {
+            endpoint = URI.create(baseUrl);
+        } catch (IllegalArgumentException e) {
+            throw new IdentityProvisioningException("Stalwart SCIM base URL is not a valid URI.", e);
+        }
+        String scheme = endpoint.getScheme();
+        if (!("https".equalsIgnoreCase(scheme) || "http".equalsIgnoreCase(scheme))
+                || StringUtils.isBlank(endpoint.getHost())
+                || endpoint.getUserInfo() != null || endpoint.getQuery() != null || endpoint.getFragment() != null
+                || !endpoint.getPath().endsWith("/scim/v2")) {
+            throw new IdentityProvisioningException("Base URL must be an absolute HTTP(S) URL ending with /scim/v2 and must not contain credentials, query, or fragment.");
+        }
+        if (bearerToken.indexOf('\\r') >= 0 || bearerToken.indexOf('\\n') >= 0) {
+            throw new IdentityProvisioningException("Stalwart SCIM bearer token contains an invalid line break.");
         }
     }
 
@@ -106,6 +119,9 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
     public ProvisionedIdentifier provision(ProvisioningEntity entity) throws IdentityProvisioningException {
         if (entity == null) {
             return null;
+        }
+        if (entity.getEntityType() == null || entity.getOperation() == null) {
+            throw new IdentityProvisioningException("Provisioning entity type and operation are required.");
         }
         if (entity.isJitProvisioning()) {
             // This is an outbound connector: the JIT marker describes the origin of the event,
@@ -342,7 +358,8 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
         request("PATCH", "/Groups/" + pathSegment(groupId), patchDocument(operations));
     }
 
-    private JsonObject userPayload(Map<ClaimMapping, List<String>> attrs, String userName) {
+    private JsonObject userPayload(Map<ClaimMapping, List<String>> attrs, String userName)
+            throws IdentityProvisioningException {
         JsonObject user = new JsonObject();
         JsonArray schemas = new JsonArray();
         schemas.add(USER_SCHEMA);
@@ -380,7 +397,8 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
         }
         String active = mappedValue(attrs, activeClaimUri);
         if (StringUtils.isNotBlank(active)) {
-            user.addProperty("active", invertActiveClaim ? !Boolean.parseBoolean(active) : Boolean.parseBoolean(active));
+            boolean activeValue = parseBooleanClaim(active, activeClaimUri);
+            user.addProperty("active", invertActiveClaim ? !activeValue : activeValue);
         }
         return user;
     }
@@ -437,7 +455,8 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
         return false;
     }
 
-    private JsonObject userPatch(Map<ClaimMapping, List<String>> attrs) {
+    private JsonObject userPatch(Map<ClaimMapping, List<String>> attrs)
+            throws IdentityProvisioningException {
         JsonArray operations = new JsonArray();
         String userName = mappedValue(attrs, userNameClaimUri);
         if (StringUtils.isNotBlank(userName)) addReplace(operations, "userName", userName);
@@ -448,7 +467,10 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
         String family = mappedValue(attrs, familyNameClaimUri);
         if (StringUtils.isNotBlank(family)) addReplace(operations, "name.familyName", family);
         String active = mappedValue(attrs, activeClaimUri);
-        if (StringUtils.isNotBlank(active)) addReplace(operations, "active", invertActiveClaim ? !Boolean.parseBoolean(active) : Boolean.parseBoolean(active));
+        if (StringUtils.isNotBlank(active)) {
+            boolean activeValue = parseBooleanClaim(active, activeClaimUri);
+            addReplace(operations, "active", invertActiveClaim ? !activeValue : activeValue);
+        }
         return patchDocument(operations);
     }
 
@@ -530,6 +552,10 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
         JsonArray resources = response.has("Resources") && response.get("Resources").isJsonArray()
                 ? response.getAsJsonArray("Resources") : new JsonArray();
         if (resources.isEmpty()) return null;
+        if (resources.size() > 1) {
+            throw new IdentityProvisioningException("Stalwart SCIM filter returned multiple " + resource
+                    + " resources for " + attribute + "; refusing to select an arbitrary match.");
+        }
         return resources.get(0).getAsJsonObject().has("id")
                 ? resources.get(0).getAsJsonObject().get("id").getAsString() : null;
     }
@@ -557,6 +583,10 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
                     + ", attempt=" + attempt + "/" + maxAttempts);
             HttpResponse<String> response = HTTP_CLIENT.send(builder.build(), HttpResponse.BodyHandlers.ofString());
             int status = response.statusCode();
+            if (status == 404 && "DELETE".equals(method)) {
+                log.debug("Stalwart SCIM DELETE target already absent; treating as idempotent success.");
+                return new JsonObject();
+            }
             log.debug("Stalwart SCIM response; userId=" + resourceId + ", operation=" + method
                     + ", status=" + status + ", attempt=" + attempt);
             if (status == 409 && "POST".equals(method) && postResourceNowExists(path, body)) {
@@ -638,6 +668,14 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
             throw new IdentityProvisioningException("Stalwart SCIM userName must be a full email address; bare usernames are not accepted.");
         }
         return value;
+    }
+
+    private boolean parseBooleanClaim(String value, String claimUri) throws IdentityProvisioningException {
+        String normalized = value == null ? "" : value.trim();
+        if ("true".equalsIgnoreCase(normalized)) return true;
+        if ("false".equalsIgnoreCase(normalized)) return false;
+        throw new IdentityProvisioningException("Claim " + claimUri
+                + " must contain Boolean true or false; received an invalid value.");
     }
 
     private String mappedValue(Map<ClaimMapping, List<String>> attrs, String uri) {
