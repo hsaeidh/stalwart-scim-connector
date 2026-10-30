@@ -54,7 +54,7 @@ jobs:
           version = attributes.get("Bundle-Version", "")
           imports = attributes.get("Import-Package", "")
           service_component = attributes.get("Service-Component", "")
-          assert version.startswith("1.0.5"), f"Unexpected Bundle-Version: {version!r}"
+          assert version.startswith("1.0.6"), f"Unexpected Bundle-Version: {version!r}"
           assert "org.wso2.carbon.identity.provisioning" in imports, "Missing WSO2 provisioning package import"
           assert "org.wso2.carbon.identity.application.common" in imports, "Missing WSO2 application.common package import"
           assert service_component, "Missing Service-Component manifest header"
@@ -79,7 +79,7 @@ jobs:
       - name: Upload connector JAR
         uses: actions/upload-artifact@v4
         with:
-          name: stalwart-scim-connector-1.0.5
+          name: stalwart-scim-connector-1.0.6
           path: components/org.stalwart.identity.provisioning.connector.scim/target/*.jar
           if-no-files-found: error
           retention-days: 30
