@@ -72,6 +72,9 @@ jobs:
 
           expected_extender = 'osgi.extender;filter:="(&(osgi.extender=osgi.component)(version>=1.3.0)(!(version>=2.0.0)))"'
           expected_ee = 'osgi.ee;filter:="(&(osgi.ee=JavaSE)(version>=21))"'
+          assert require_capability.count("osgi.extender;filter") == 1, (
+              "Expected exactly one SCR extender requirement: " + require_capability
+          )
           assert expected_extender in require_capability, (
               "Missing/wrong osgi.extender requirement: " + require_capability
           )
@@ -105,11 +108,9 @@ jobs:
           descriptor_name, root = component_xml
           assert root.tag.endswith("component"), f"Unexpected DS XML root: {root.tag}"
           namespace = root.tag.split("}")[0].lstrip("{")
-          assert namespace in {
-              "http://www.osgi.org/xmlns/scr/v1.3.0",
-              "http://www.osgi.org/xmlns/scr/v1.4.0",
-              "http://www.osgi.org/xmlns/scr/v1.5.0",
-          }, f"Unexpected DS namespace: {namespace}"
+          assert namespace == "http://www.osgi.org/xmlns/scr/v1.4.0", (
+              f"Expected DS namespace v1.4.0, got: {namespace}"
+          )
           assert root.attrib.get("immediate") == "true", "DS component must be immediate"
           assert root.attrib.get("activate") == "activate", "Missing activate method"
           assert root.attrib.get("deactivate") == "deactivate", "Missing deactivate method"
@@ -137,8 +138,8 @@ jobs:
 
           print(f"Verified {jar}: Bundle-Version={version}")
           print(f"Verified DS descriptor: {descriptor_name} ({namespace})")
-          print(f"Verified Bundle-StartLevel=1 and Bundle-ActivationPolicy=lazy")
-          print("Verified both OSGi extender and JavaSE capabilities.")
+          print("Verified exactly one SCR extender requirement and JavaSE >=21.")
+          print("Verified Bundle-StartLevel=1 and Bundle-ActivationPolicy=lazy.")
           print("Verified WSO2 Import-Package ranges and no embedded WSO2 classes.")
           print("Verified v1.0.8 static-init, constructor and activation diagnostic markers.")
           print("Verified nested Gson and unsigned JAR.")
