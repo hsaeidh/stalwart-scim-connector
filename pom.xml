@@ -15,7 +15,7 @@
     <name>Stalwart SCIM Provisioning Connector</name>
     <description>Independent WSO2 Identity Server outbound provisioning connector for Stalwart SCIM.</description>
     <modules>
-        <module>components/org.stalwart.identity.provisioning.connector.stalwart.scim</module>
+        <module>components/org.stalwart.identity.provisioning.connector.scim</module>
     </modules>
     <repositories>
         <repository>
