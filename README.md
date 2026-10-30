@@ -42,7 +42,7 @@ Only explicitly mapped SCIM attributes are sent. Arbitrary unknown attributes ar
 
 ## 1.0.8 OSGi activation diagnostics
 
-Version 1.0.8 uses the BND Maven plugin for OSGi metadata and Declarative Services annotation processing. The DS descriptor is generated from the OSGi annotations (no hand-maintained component XML). The build pins the generated descriptor to DS 1.4.0, sets `Bundle-ActivationPolicy: lazy` and `Bundle-StartLevel: 1`, and retains the JavaSE 21 and SCR extender requirements.
+Version 1.0.8 uses the BND Maven plugin for OSGi metadata and Declarative Services annotation processing. The DS descriptor is generated from the OSGi annotations (no hand-maintained component XML). BND generates the descriptor using the DS 1.3 baseline accepted by the supplied compatibility checklist; the CI also accepts DS 1.4 descriptors. The bundle sets `Bundle-ActivationPolicy: lazy` and `Bundle-StartLevel: 1`, and retains the JavaSE 21 and SCR extender requirements.
 
 The service component has distinct `System.err` markers for static initialization, constructor invocation, activation entry, BundleContext acquisition, factory construction, service registration, activation completion, activation failure and deactivation. This separates the following runtime checkpoints:
 
