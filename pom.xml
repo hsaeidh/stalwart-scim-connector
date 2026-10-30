@@ -8,14 +8,14 @@
         <version>1.4</version>
         <relativePath/>
     </parent>
-    <groupId>org.irisadc.identity.provisioning</groupId>
+    <groupId>org.stalwart.identity.provisioning</groupId>
     <artifactId>identity-outbound-provisioning-stalwart-scim</artifactId>
-    <version>1.0.2</version>
+    <version>1.0.3</version>
     <packaging>pom</packaging>
     <name>Stalwart SCIM Provisioning Connector</name>
     <description>Independent WSO2 Identity Server outbound provisioning connector for Stalwart SCIM.</description>
     <modules>
-        <module>components/org.irisadc.identity.provisioning.connector.stalwart.scim</module>
+        <module>components/org.stalwart.identity.provisioning.connector.stalwart.scim</module>
     </modules>
     <repositories>
         <repository>
