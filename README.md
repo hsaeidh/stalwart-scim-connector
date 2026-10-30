@@ -8,7 +8,21 @@ Independent outbound provisioning connector for WSO2 Identity Server 7.3.0 and S
 - Bundle symbolic name: `org.irisadc.identity.provisioning.connector.stalwart.scim`
 - Java package: `org.irisadc.identity.provisioning.connector.stalwart.scim`
 - Version: `1.0.0`
-- Source baseline: WSO2 SCIM outbound provisioning connector `v5.4.1` (Apache-2.0)
+- WSO2 framework compatibility baseline: identity framework `5.15.7`, inbound SCIM common `5.1.3`, Charon `2.2.0`
+- The original WSO2 connector's lifecycle dispatch and framework integration were used as a reference. Its legacy SCIM 1.0 HTTP client is **not** used.
+
+## Protocol implementation
+
+The connector implements Stalwart's SCIM 2.0 API directly using JDK 21 `HttpClient` and Gson:
+
+- Base path: `https://<host>/scim/v2`
+- Authentication: `Authorization: Bearer <API key>`
+- Media type: `application/scim+json`
+- User and Group schemas use the RFC 7643 SCIM 2.0 URNs.
+- User updates and group membership changes use SCIM PATCH.
+- User and group lookup uses SCIM `eq` filters to obtain Stalwart resource IDs before PATCH or DELETE.
+
+The connector does not send passwords. Stalwart's SCIM User schema does not support password provisioning; authentication remains with the identity provider.
 
 ## Claim mapping
 
@@ -20,32 +34,34 @@ The connector reads **local WSO2 claim URIs** from the provisioning entity and m
 | `externalId` | `http://wso2.org/claims/username` |
 | `name.givenName` | `http://wso2.org/claims/givenname` |
 | `name.familyName` | `http://wso2.org/claims/lastname` |
-| `active` | Optional; unset by default |
+| `active` | Optional Boolean claim; unset by default |
 
-Mapping can be disabled in the connector configuration. The email claim is mandatory when mapping is enabled; provisioning fails clearly if it is absent rather than sending the national identifier as Stalwart's `userName`.
+Mapping can be disabled. When enabled, the email claim is mandatory; provisioning fails rather than sending the national identifier as Stalwart's `userName`. The active mapping expects a Boolean source claim. Do not map an inverse `accountDisabled` claim directly to `active` without an explicit inversion rule.
 
-The active mapping expects a Boolean source claim. If your WSO2 account state is represented by an inverse claim such as `accountDisabled`, do not map it directly to `active`; use a non-inverted Boolean claim or implement an explicit inversion rule.
+The WSO2 connector configuration uses text fields for source claim URIs and a Boolean toggle. It does not currently provide a dynamic dropdown populated from the WSO2 claim catalog.
 
 ## Build
 
-GitHub Actions builds with Temurin JDK 21 and Maven. The resulting OSGi bundle is uploaded as the workflow artifact:
+GitHub Actions builds with Temurin JDK 21 and Maven. The resulting OSGi bundle is uploaded as a workflow artifact:
 
 `components/org.irisadc.identity.provisioning.connector.stalwart.scim/target/*.jar`
 
-No local Java or Maven installation is required to build.
+No local Java or Maven installation is required.
 
 ## Installation
 
-Do not install until the GitHub Actions build is green and the generated bundle has been checked against the exact WSO2 IS 7.3.0 runtime. The intended deployment location is:
+Do not install until the GitHub Actions build is green and the bundle has been checked against the exact WSO2 IS 7.3.0 runtime. The intended deployment location is:
 
 `<IS_HOME>/repository/components/dropins/`
 
-Restart WSO2 IS and verify that the OSGi service component registers connector type `stalwart-scim`. Keep the official `scim` connector installed; this bundle has a distinct symbolic name, package, and connector type.
+Restart WSO2 IS and verify that the OSGi service component registers connector type `stalwart-scim`. The official `scim` connector can remain installed; this bundle has a distinct symbolic name, package, and connector type.
 
-## Current scope / verification status
+## Verification status and limitations
 
-The implementation carries over the upstream user/group provisioning operations, JIT gate, and password handling, with explicit user claim mapping. Runtime interoperability with a live Stalwart server and the WSO2 IS 7.3.0 OSGi container remains to be integration-tested. Group-member events initiated from a group resource still depend on the member identifiers supplied by WSO2; verify that those values are Stalwart `userName` values in your configured outbound group claim mapping.
+Compilation is being checked in GitHub Actions. Runtime interoperability with a live Stalwart Enterprise server and the WSO2 IS 7.3.0 OSGi container remains to be integration-tested.
+
+For group-member events supplied as group resources, the connector resolves each member first by `externalId`, then by `userName`. Verify that the source member values correspond to the configured WSO2 username/national-ID or email claims in your deployment. Stalwart group membership is represented by SCIM User resource IDs.
 
 ## License
 
-Apache License 2.0. This derivative includes source from the WSO2 SCIM outbound provisioning connector, tag `v5.4.1`.
+Apache License 2.0. The WSO2 framework integration reference was based on WSO2's SCIM outbound provisioning connector, tag `v5.4.1`.
