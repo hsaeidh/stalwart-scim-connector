@@ -169,10 +169,19 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
             }
         }
         JsonObject patch = userPatch(attrs);
-        if (patch.getAsJsonArray("Operations").size() > 0) {
+        List<String> aliases = claimValues(attrs, emailAliasesClaimUri);
+        boolean reconcileAliases = StringUtils.isNotBlank(emailAliasesClaimUri) && aliases != null;
+        if (patch.getAsJsonArray("Operations").size() > 0 || reconcileAliases) {
             String id = findUserId(attrs, entity.getEntityName());
             if (id != null) {
-                request("PATCH", "/Users/" + pathSegment(id), patch);
+                JsonObject current = request("GET", "/Users/" + pathSegment(id), null);
+                if (reconcileAliases) reconcileEmailAliases(current, aliases, targetUserName(attrs, entity.getEntityName()),
+                        patch.getAsJsonArray("Operations"));
+                if (patchChangesCurrent(current, patch.getAsJsonArray("Operations"))) {
+                    request("PATCH", "/Users/" + pathSegment(id), patch);
+                } else {
+                    log.debug("Skipping unchanged user PATCH; userId=" + id + ", operation=UPDATE");
+                }
             } else {
                 throw new IdentityProvisioningException("Stalwart user was not found for update: "
                         + targetUserName(attrs, entity.getEntityName()));
@@ -331,11 +340,77 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
         if (!name.isEmpty()) {
             user.add("name", name);
         }
+        // Stalwart derives the immutable primary email from userName; only add aliases here.
+        List<String> aliases = claimValues(attrs, emailAliasesClaimUri);
+        if (aliases != null) {
+            JsonArray emails = new JsonArray();
+            for (String alias : aliases) {
+                if (StringUtils.isNotBlank(alias) && !userName.equalsIgnoreCase(alias.trim())) {
+                    JsonObject email = new JsonObject();
+                    email.addProperty("value", alias.trim());
+                    email.addProperty("type", "work");
+                    emails.add(email);
+                }
+            }
+            if (!emails.isEmpty()) user.add("emails", emails);
+        }
         String active = mappedValue(attrs, activeClaimUri);
         if (StringUtils.isNotBlank(active)) {
             user.addProperty("active", invertActiveClaim ? !Boolean.parseBoolean(active) : Boolean.parseBoolean(active));
         }
         return user;
+    }
+
+    private void reconcileEmailAliases(JsonObject current, List<String> desiredAliases, String primary,
+                                       JsonArray operations) {
+        java.util.Set<String> desired = new java.util.LinkedHashSet<>();
+        for (String alias : desiredAliases) {
+            if (StringUtils.isNotBlank(alias) && !alias.trim().equalsIgnoreCase(primary)) {
+                desired.add(alias.trim().toLowerCase(java.util.Locale.ROOT));
+            }
+        }
+        java.util.Set<String> existing = new java.util.LinkedHashSet<>();
+        if (current.has("emails") && current.get("emails").isJsonArray()) {
+            for (JsonElement item : current.getAsJsonArray("emails")) {
+                if (!item.isJsonObject() || !item.getAsJsonObject().has("value")) continue;
+                JsonObject email = item.getAsJsonObject();
+                String value = email.get("value").getAsString();
+                boolean primaryEntry = (email.has("primary") && email.get("primary").getAsBoolean())
+                        || value.equalsIgnoreCase(primary);
+                if (!primaryEntry) existing.add(value.toLowerCase(java.util.Locale.ROOT));
+            }
+        }
+        for (String alias : existing) {
+            if (!desired.contains(alias)) addOperation(operations, "remove",
+                    "emails[value eq \"" + escapeFilter(alias) + "\"]", null);
+        }
+        for (String alias : desired) {
+            if (!existing.contains(alias)) {
+                JsonObject email = new JsonObject();
+                email.addProperty("value", alias);
+                email.addProperty("type", "work");
+                addOperation(operations, "add", "emails", email);
+            }
+        }
+    }
+
+    private boolean patchChangesCurrent(JsonObject current, JsonArray operations) {
+        for (JsonElement item : operations) {
+            JsonObject operation = item.getAsJsonObject();
+            if (!"replace".equalsIgnoreCase(operation.has("op") ? operation.get("op").getAsString() : "")) return true;
+            String path = operation.has("path") ? operation.get("path").getAsString() : "";
+            JsonElement wanted = operation.get("value");
+            JsonElement actual = current;
+            for (String segment : path.split("\\\\.")) {
+                if (actual == null || !actual.isJsonObject() || !actual.getAsJsonObject().has(segment)) {
+                    actual = null;
+                    break;
+                }
+                actual = actual.getAsJsonObject().get(segment);
+            }
+            if (wanted == null || actual == null || !wanted.equals(actual)) return true;
+        }
+        return false;
     }
 
     private JsonObject userPatch(Map<ClaimMapping, List<String>> attrs) {
@@ -436,6 +511,9 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
     }
 
     private JsonObject request(String method, String path, JsonObject body) throws IdentityProvisioningException {
+        final int maxAttempts = 3;
+        String resourceId = resourceIdFromPath(path);
+        for (int attempt = 1; attempt <= maxAttempts; attempt++) {
         try {
             HttpRequest.Builder builder = HttpRequest.newBuilder()
                     .uri(URI.create(baseUrl + path))
@@ -451,22 +529,73 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
                 builder.header("Content-Type", "application/scim+json")
                         .method(method, HttpRequest.BodyPublishers.ofString("{}"));
             }
+            log.debug("Stalwart SCIM request; userId=" + resourceId + ", operation=" + method
+                    + ", attempt=" + attempt + "/" + maxAttempts);
             HttpResponse<String> response = HTTP_CLIENT.send(builder.build(), HttpResponse.BodyHandlers.ofString());
             int status = response.statusCode();
+            log.debug("Stalwart SCIM response; userId=" + resourceId + ", operation=" + method
+                    + ", status=" + status + ", attempt=" + attempt);
+            if (status == 408 || status == 429 || status >= 500) {
+                if ("POST".equals(method) && postResourceNowExists(path, body)) return new JsonObject();
+                if (attempt < maxAttempts) { retryBackoff(attempt); continue; }
+            }
             if (status < 200 || status >= 300) {
-                throw new IdentityProvisioningException("Stalwart SCIM " + method + " " + path
-                        + " failed with HTTP " + status + ": " + abbreviate(response.body()));
+                throw new IdentityProvisioningException("Stalwart SCIM " + method + " request failed with HTTP "
+                        + status + ": " + abbreviate(response.body()));
             }
             if (StringUtils.isBlank(response.body())) return new JsonObject();
             return JsonParser.parseString(response.body()).getAsJsonObject();
         } catch (IOException e) {
-            throw new IdentityProvisioningException("I/O error while calling Stalwart SCIM endpoint.", e);
+            log.warn("Stalwart SCIM I/O failure; userId=" + resourceId + ", operation=" + method
+                    + ", attempt=" + attempt, e);
+            if ("POST".equals(method) && postResourceNowExists(path, body)) return new JsonObject();
+            if (attempt == maxAttempts) {
+                throw new IdentityProvisioningException("I/O error while calling Stalwart SCIM endpoint after "
+                        + maxAttempts + " attempts.", e);
+            }
+            retryBackoff(attempt);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new IdentityProvisioningException("Interrupted while calling Stalwart SCIM endpoint.", e);
         } catch (JsonParseException | IllegalStateException | IllegalArgumentException e) {
             throw new IdentityProvisioningException("Invalid Stalwart SCIM response or endpoint.", e);
         }
+        }
+        throw new IdentityProvisioningException("Stalwart SCIM request failed after retries.");
+    }
+
+    private boolean postResourceNowExists(String path, JsonObject body) throws IdentityProvisioningException {
+        if (body == null || !path.matches("^/(Users|Groups)$")) return false;
+        String resource = path.substring(1);
+        String attribute = "Users".equals(resource) ? "userName" : "displayName";
+        if (!body.has(attribute)) return false;
+        String value = body.get(attribute).getAsString();
+        return StringUtils.isNotBlank(value) && findResourceId(resource, attribute, value) != null;
+    }
+
+    private void retryBackoff(int attempt) throws IdentityProvisioningException {
+        try {
+            Thread.sleep(250L * (1L << (attempt - 1)));
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IdentityProvisioningException("Interrupted during SCIM retry backoff.", e);
+        }
+    }
+
+    private String resourceIdFromPath(String path) {
+        java.util.regex.Matcher matcher = java.util.regex.Pattern
+                .compile("^/(?:Users|Groups)/([^/?]+)").matcher(path == null ? "" : path);
+        return matcher.find() ? matcher.group(1) : "unresolved";
+    }
+
+    private static String normalizeScimFilter(String filter) {
+        if (filter == null) return null;
+        String normalized = filter.replaceAll("(?i)\\beq\\b", "eq").trim();
+        java.util.regex.Matcher matcher = java.util.regex.Pattern
+                .compile("(?i)^([A-Za-z][A-Za-z0-9._-]*\\s+eq\\s+)(?!\\\")(.*)$")
+                .matcher(normalized);
+        if (matcher.matches()) normalized = matcher.group(1) + "\\\"" + escapeFilter(matcher.group(2).trim()) + "\\\"";
+        return normalized;
     }
 
     private String targetUserName(Map<ClaimMapping, List<String>> attrs, String fallback)
