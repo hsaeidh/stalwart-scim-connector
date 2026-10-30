@@ -7,7 +7,7 @@ Independent outbound SCIM 2.0 provisioning connector for WSO2 Identity Server 7.
 - Connector type: `stalwart-scim`
 - Bundle symbolic name: `org.stalwart.identity.provisioning.connector.scim`
 - Java package: `org.stalwart.identity.provisioning.connector.scim`
-- Version: `1.0.7`
+- Version: `1.0.8`
 - Runtime baseline: WSO2 Identity Framework 7.10.156.
 
 ## Protocol and claim mapping
@@ -40,15 +40,23 @@ Stalwart maps SCIM `active` to the account's `authenticate` permission. `active=
 
 Only explicitly mapped SCIM attributes are sent. Arbitrary unknown attributes are not blindly forwarded; acceptance of unsupported attributes depends on the target schema and implementation.
 
-## 1.0.7 build and activation diagnostics
+## 1.0.8 OSGi activation diagnostics
 
-The OSGi bundle build explicitly enables BND Declarative Services annotation processing. The CI workflow verifies that the resulting JAR contains a `Service-Component` manifest header and the Stalwart DS XML descriptor, and checks the activation/deactivation method names.
+Version 1.0.8 uses the BND Maven plugin for OSGi metadata and Declarative Services annotation processing. The DS descriptor is generated from the OSGi annotations (no hand-maintained component XML). BND generates the descriptor using the DS 1.3 baseline accepted by the supplied compatibility checklist; the CI also accepts DS 1.4 descriptors. The bundle sets `Bundle-ActivationPolicy: lazy` and `Bundle-StartLevel: 1`, and retains the JavaSE 21 and SCR extender requirements.
 
-The component logs activation progress, BundleContext, factory construction, connector type, service registration, and the final `STALWART-SCIM-CONNECTOR-READY v1.0.7` marker. Activation failures are logged and rethrown. The Maven build also runs a small factory smoke test; this validates factory construction and configuration-property creation outside OSGi, not runtime DS activation.
+The service component has distinct `System.err` markers for static initialization, constructor invocation, activation entry, BundleContext acquisition, factory construction, service registration, activation completion, activation failure and deactivation. This separates the following runtime checkpoints:
 
-GitHub Actions builds with Temurin JDK 21 and Maven. The artifact is named `stalwart-scim-connector-1.0.7`.
+1. Bundle installed/resolved/started by Equinox.
+2. Component class static initializer entered.
+3. DS component instance constructed.
+4. DS `activate(ComponentContext)` invoked.
+5. WSO2 provisioning factory service registered.
 
-Copy the built JAR to `<IS_HOME>/repository/components/dropins/`, restart WSO2 IS, and verify OSGi registration of connector type `stalwart-scim`. Compilation, the factory smoke test, and manifest/DS descriptor checks do not replace runtime integration tests against the target WSO2 and Stalwart versions.
+The Maven factory smoke test is a separate executable test with the Maven test classpath. It checks the connector type and all 11 configuration properties, including the default email-to-`userName` and local-username-to-`externalId` mappings. It is deliberately not launched with `java -cp connector.jar`: the distributable bundle does not embed WSO2 API classes, so a standalone invocation without the WSO2 dependency classpath would be an invalid test. The smoke test does not prove runtime DS activation.
+
+GitHub Actions builds with Temurin JDK 21 and Maven, verifies the manifest, DS XML, diagnostic markers, nested Gson JAR, absence of embedded WSO2 classes and absence of JAR signatures. The artifact is named `stalwart-scim-connector-1.0.8`.
+
+Copy the built JAR to `<IS_HOME>/repository/components/dropins/`, restart WSO2 IS, and inspect the WSO2 container logs for the v1.0.8 markers. Compilation, the factory smoke test, and manifest/DS descriptor checks do not replace runtime integration tests against the target WSO2 and Stalwart versions.
 
 ## License
 
