@@ -27,7 +27,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          JAR=$(find components/org.irisadc.identity.provisioning.connector.stalwart.scim/target -maxdepth 1 -type f -name '*.jar' ! -name '*-sources.jar' | head -n 1)
+          JAR=$(find components/org.stalwart.identity.provisioning.connector.scim/target -maxdepth 1 -type f -name '*.jar' ! -name '*-sources.jar' | head -n 1)
           test -n "$JAR"
           python3 - "$JAR" <<'PY'
           import sys
@@ -49,7 +49,7 @@ jobs:
                   attributes[key] = value
           version = attributes.get("Bundle-Version", "")
           imports = attributes.get("Import-Package", "")
-          assert version.startswith("1.0.2"), f"Unexpected Bundle-Version: {version!r}"
+          assert version.startswith("1.0.3"), f"Unexpected Bundle-Version: {version!r}"
           assert "org.wso2.carbon.identity.provisioning" in imports, "Missing WSO2 provisioning package import"
           assert "org.wso2.carbon.identity.application.common" in imports, "Missing WSO2 application.common package import"
           print(f"Verified {jar}: Bundle-Version={version}")
@@ -58,7 +58,7 @@ jobs:
       - name: Upload connector JAR
         uses: actions/upload-artifact@v4
         with:
-          name: stalwart-scim-connector-1.0.2
-          path: components/org.irisadc.identity.provisioning.connector.stalwart.scim/target/*.jar
+          name: stalwart-scim-connector-1.0.3
+          path: components/org.stalwart.identity.provisioning.connector.scim/target/*.jar
           if-no-files-found: error
           retention-days: 30
