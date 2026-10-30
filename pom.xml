@@ -10,7 +10,7 @@
     </parent>
     <groupId>org.stalwart.identity.provisioning</groupId>
     <artifactId>identity-outbound-provisioning-stalwart-scim</artifactId>
-    <version>1.0.3</version>
+    <version>1.0.4</version>
     <packaging>pom</packaging>
     <name>Stalwart SCIM Provisioning Connector</name>
     <description>Independent WSO2 Identity Server outbound provisioning connector for Stalwart SCIM.</description>
