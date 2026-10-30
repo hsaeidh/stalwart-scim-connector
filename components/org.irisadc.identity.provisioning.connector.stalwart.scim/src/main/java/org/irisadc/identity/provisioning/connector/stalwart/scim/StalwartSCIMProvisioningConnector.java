@@ -62,6 +62,7 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
     private String givenNameClaimUri = "http://wso2.org/claims/givenname";
     private String familyNameClaimUri = "http://wso2.org/claims/lastname";
     private String activeClaimUri = "";
+    private boolean invertActiveClaim = false;
     private HttpClient httpClient;
 
     @Override
@@ -83,6 +84,8 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
                     case StalwartSCIMProvisioningConnectorConstants.GIVEN_NAME_CLAIM_URI -> givenNameClaimUri = value;
                     case StalwartSCIMProvisioningConnectorConstants.FAMILY_NAME_CLAIM_URI -> familyNameClaimUri = value;
                     case StalwartSCIMProvisioningConnectorConstants.ACTIVE_CLAIM_URI -> activeClaimUri = value;
+                    case StalwartSCIMProvisioningConnectorConstants.INVERT_ACTIVE_CLAIM ->
+                            invertActiveClaim = Boolean.parseBoolean(value);
                     case IdentityProvisioningConstants.JIT_PROVISIONING_ENABLED ->
                             jitProvisioningEnabled = "1".equals(value) || Boolean.parseBoolean(value);
                     default -> log.debug("Ignoring unsupported Stalwart connector property: " + property.getName());
@@ -301,7 +304,7 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
         }
         String active = mappedValue(attrs, activeClaimUri);
         if (StringUtils.isNotBlank(active)) {
-            user.addProperty("active", Boolean.parseBoolean(active));
+            user.addProperty("active", invertActiveClaim ? !Boolean.parseBoolean(active) : Boolean.parseBoolean(active));
         }
         return user;
     }
@@ -317,7 +320,7 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
         String family = mappedValue(attrs, familyNameClaimUri);
         if (StringUtils.isNotBlank(family)) addReplace(operations, "name.familyName", family);
         String active = mappedValue(attrs, activeClaimUri);
-        if (StringUtils.isNotBlank(active)) addReplace(operations, "active", Boolean.parseBoolean(active));
+        if (StringUtils.isNotBlank(active)) addReplace(operations, "active", invertActiveClaim ? !Boolean.parseBoolean(active) : Boolean.parseBoolean(active));
         return patchDocument(operations);
     }
 
@@ -370,8 +373,25 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
 
     private String findUserIdByIdentifier(String identifier) throws IdentityProvisioningException {
         if (StringUtils.isBlank(identifier)) return null;
-        String id = findResourceId("Users", "externalId", identifier);
-        return id != null ? id : findResourceId("Users", "userName", identifier);
+        String candidate = stripUserStoreDomain(identifier);
+        String id = findResourceId("Users", "externalId", candidate);
+        if (id == null && !candidate.equals(identifier)) {
+            id = findResourceId("Users", "externalId", identifier);
+        }
+        if (id != null) return id;
+        id = findResourceId("Users", "userName", candidate);
+        return id != null ? id : (candidate.equals(identifier) ? null
+                : findResourceId("Users", "userName", identifier));
+    }
+
+    private String stripUserStoreDomain(String value) {
+        if (StringUtils.isBlank(value)) return value;
+        int slash = value.indexOf('/');
+        if (slash > 0 && (StringUtils.isBlank(userStoreDomainName)
+                || userStoreDomainName.equalsIgnoreCase(value.substring(0, slash)))) {
+            return value.substring(slash + 1);
+        }
+        return value;
     }
 
     private String findResourceId(String resource, String attribute, String value)
@@ -445,7 +465,13 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
     }
 
     private List<String> groupNames(Map<ClaimMapping, List<String>> attrs) {
-        return claimValues(attrs, IdentityProvisioningConstants.GROUP_CLAIM_URI);
+        List<String> names = claimValues(attrs, IdentityProvisioningConstants.GROUP_CLAIM_URI);
+        if (names != null) {
+            List<String> normalized = new ArrayList<>();
+            for (String name : names) normalized.add(stripUserStoreDomain(name));
+            return normalized;
+        }
+        return null;
     }
 
     private String valueOf(Property property) {
