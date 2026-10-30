@@ -196,6 +196,21 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
         Map<ClaimMapping, List<String>> attrs = entity.getAttributes();
         List<String> names = groupNames(attrs);
         String displayName = CollectionUtils.isNotEmpty(names) ? names.get(0) : entity.getEntityName();
+        // Bulk/JIT delivery can invoke the same create event more than once.
+        // Check by stable group name before POST; the request layer also resolves
+        // a concurrent duplicate POST after a 409 response.
+        String existingId = findResourceId("Groups", "displayName", displayName);
+        if (existingId != null) {
+            log.info("Stalwart group already exists; reconciling memberships: " + displayName);
+            List<String> existingUsers = userNames(attrs);
+            if (existingUsers != null) {
+                for (String user : existingUsers) {
+                    updateGroupMembership(displayName, user, true);
+                }
+            }
+            return;
+        }
+
         JsonObject group = new JsonObject();
         JsonArray schemas = new JsonArray();
         schemas.add(GROUP_SCHEMA);
@@ -265,7 +280,7 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
 
     private void updateUserGroupMemberships(ProvisioningEntity entity)
             throws IdentityProvisioningException {
-        List<String> groups = claimValues(entity.getAttributes(), IdentityProvisioningConstants.GROUP_CLAIM_URI);
+        List<String> groups = groupNames(entity.getAttributes());
         if (groups != null) {
             String username = targetUserName(entity.getAttributes(), entity.getEntityName());
             for (String group : groups) {
@@ -276,6 +291,7 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
 
     private void updateGroupMembership(String groupName, String username, boolean add)
             throws IdentityProvisioningException {
+        groupName = stripUserStoreDomain(groupName);
         String groupId = findResourceId("Groups", "displayName", groupName);
         if (groupId == null) {
             throw new IdentityProvisioningException("Stalwart group was not found for membership update: " + groupName);
@@ -531,6 +547,11 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
             int status = response.statusCode();
             log.debug("Stalwart SCIM response; userId=" + resourceId + ", operation=" + method
                     + ", status=" + status + ", attempt=" + attempt);
+            if (status == 409 && "POST".equals(method) && postResourceNowExists(path, body)) {
+                log.info("Stalwart SCIM duplicate POST resolved as idempotent success; operation=" + method
+                        + ", resource=" + path);
+                return new JsonObject();
+            }
             if (status == 408 || status == 429 || status >= 500) {
                 if ("POST".equals(method) && postResourceNowExists(path, body)) return new JsonObject();
                 if (attempt < maxAttempts) { retryBackoff(attempt); continue; }
