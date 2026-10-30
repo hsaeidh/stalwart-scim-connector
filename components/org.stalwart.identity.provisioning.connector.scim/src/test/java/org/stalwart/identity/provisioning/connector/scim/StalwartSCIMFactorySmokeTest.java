@@ -74,7 +74,7 @@ public final class StalwartSCIMFactorySmokeTest {
         System.out.println("Connector type: " + factory.getConnectorType());
         System.out.println("Properties count: " + properties.size());
         System.out.println("Required claim mapping defaults: emailaddress -> userName, username -> externalId");
-        System.out.println("SMOKE TEST PASSED v1.0.6");
+        System.out.println("SMOKE TEST PASSED v1.0.7");
     }
 
     private static void assertDefault(Map<String, Property> properties, String name, String expected) {
