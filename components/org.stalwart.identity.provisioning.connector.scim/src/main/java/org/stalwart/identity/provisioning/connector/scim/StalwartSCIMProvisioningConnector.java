@@ -245,20 +245,32 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
         if (StringUtils.isNotBlank(oldName) && !oldName.equals(groupName)) {
             addReplace(operations, "displayName", groupName);
         }
+        JsonObject currentGroup = request("GET", "/Groups/" + pathSegment(groupId), null);
+        java.util.Set<String> currentMemberIds = new java.util.HashSet<>();
+        if (currentGroup.has("members") && currentGroup.get("members").isJsonArray()) {
+            for (JsonElement member : currentGroup.getAsJsonArray("members")) {
+                if (member.isJsonObject() && member.getAsJsonObject().has("value")) {
+                    currentMemberIds.add(member.getAsJsonObject().get("value").getAsString());
+                }
+            }
+        }
         List<String> added = userNames(attrs);
         if (added != null) {
             for (String username : added) {
                 JsonObject member = resolveMember(username);
-                JsonArray one = new JsonArray();
-                one.add(member);
-                addOperation(operations, "add", "members", one);
+                String memberId = member.get("value").getAsString();
+                if (currentMemberIds.add(memberId)) {
+                    JsonArray one = new JsonArray();
+                    one.add(member);
+                    addOperation(operations, "add", "members", one);
+                }
             }
         }
         List<String> removed = claimValues(attrs, IdentityProvisioningConstants.DELETED_USER_CLAIM_URI);
         if (removed != null) {
             for (String username : removed) {
                 String id = findUserIdByIdentifier(username);
-                if (id != null) {
+                if (id != null && currentMemberIds.remove(id)) {
                     addOperation(operations, "remove", "members[value eq \"" + escapeFilter(id) + "\"]", null);
                 }
             }
