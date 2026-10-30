@@ -21,9 +21,9 @@ jobs:
           distribution: temurin
           java-version: "21"
           cache: maven
-      - name: Build OSGi bundle
-        run: mvn -B -ntp clean package
-      - name: Verify OSGi bundle metadata
+      - name: Build OSGi bundle and run factory smoke test
+        run: mvn -B -ntp clean verify
+      - name: Verify OSGi bundle metadata and Declarative Services descriptor
         shell: bash
         run: |
           set -euo pipefail
@@ -32,10 +32,13 @@ jobs:
           python3 - "$JAR" <<'PY'
           import sys
           import zipfile
+          import xml.etree.ElementTree as ET
 
           jar = sys.argv[1]
           with zipfile.ZipFile(jar) as archive:
               raw = archive.read("META-INF/MANIFEST.MF").decode("utf-8")
+              names = archive.namelist()
+
           unfolded = []
           for line in raw.replace("\r\n", "\n").split("\n"):
               if line.startswith(" ") and unfolded:
@@ -47,18 +50,36 @@ jobs:
               if ": " in line:
                   key, value = line.split(": ", 1)
                   attributes[key] = value
+
           version = attributes.get("Bundle-Version", "")
           imports = attributes.get("Import-Package", "")
-          assert version.startswith("1.0.4"), f"Unexpected Bundle-Version: {version!r}"
+          service_component = attributes.get("Service-Component", "")
+          assert version.startswith("1.0.5"), f"Unexpected Bundle-Version: {version!r}"
           assert "org.wso2.carbon.identity.provisioning" in imports, "Missing WSO2 provisioning package import"
           assert "org.wso2.carbon.identity.application.common" in imports, "Missing WSO2 application.common package import"
+          assert service_component, "Missing Service-Component manifest header"
+
+          ds_files = [name for name in names if name.startswith("OSGI-INF/") and name.endswith(".xml")]
+          assert ds_files, "No OSGI-INF Declarative Services XML was generated"
+          component_xml = None
+          for name in ds_files:
+              root = ET.fromstring(zipfile.ZipFile(jar).read(name))
+              if root.attrib.get("name") == "org.stalwart.identity.provisioning.connector.scim.internal.StalwartSCIMConnectorServiceComponent":
+                  component_xml = (name, root)
+                  break
+          assert component_xml, "Stalwart service component descriptor not found"
+          descriptor_name, root = component_xml
+          assert root.attrib.get("activate") == "activate", f"Unexpected activate method in {descriptor_name}"
+          assert root.attrib.get("deactivate") == "deactivate", f"Unexpected deactivate method in {descriptor_name}"
           print(f"Verified {jar}: Bundle-Version={version}")
+          print(f"Verified Service-Component: {service_component}")
+          print(f"Verified DS descriptor: {descriptor_name}")
           print("Verified WSO2 Import-Package entries.")
           PY
       - name: Upload connector JAR
         uses: actions/upload-artifact@v4
         with:
-          name: stalwart-scim-connector-1.0.4
+          name: stalwart-scim-connector-1.0.5
           path: components/org.stalwart.identity.provisioning.connector.scim/target/*.jar
           if-no-files-found: error
           retention-days: 30

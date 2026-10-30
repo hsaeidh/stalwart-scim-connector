@@ -7,7 +7,7 @@ Independent outbound SCIM 2.0 provisioning connector for WSO2 Identity Server 7.
 - Connector type: `stalwart-scim`
 - Bundle symbolic name: `org.stalwart.identity.provisioning.connector.scim`
 - Java package: `org.stalwart.identity.provisioning.connector.scim`
-- Version: `1.0.4`
+- Version: `1.0.5`
 - Runtime baseline: WSO2 Identity Framework 7.10.156.
 
 ## Protocol and claim mapping
@@ -40,11 +40,15 @@ Stalwart maps SCIM `active` to the account's `authenticate` permission. `active=
 
 Only explicitly mapped SCIM attributes are sent. Arbitrary unknown attributes are not blindly forwarded; acceptance of unsupported attributes depends on the target schema and implementation.
 
-## Build and installation
+## 1.0.5 build and activation diagnostics
 
-GitHub Actions builds with Temurin JDK 21 and Maven. The artifact is named `stalwart-scim-connector-1.0.4`.
+The OSGi bundle build explicitly enables BND Declarative Services annotation processing. The CI workflow verifies that the resulting JAR contains a `Service-Component` manifest header and the Stalwart DS XML descriptor, and checks the activation/deactivation method names.
 
-Copy the JAR to `<IS_HOME>/repository/components/dropins/`, restart WSO2 IS, and verify OSGi registration of connector type `stalwart-scim`. Compilation and manifest checks do not replace runtime integration tests against the target WSO2 and Stalwart versions.
+The component logs a start marker, BundleContext, factory construction, connector type, service registration, and a final `STALWART-SCIM ACTIVATE END v1.0.5 — READY` marker. Activation failures are logged and rethrown. The Maven build also runs a small factory smoke test; this validates factory construction and configuration-property creation outside OSGi, not runtime DS activation.
+
+GitHub Actions builds with Temurin JDK 21 and Maven. The artifact is named `stalwart-scim-connector-1.0.5`.
+
+Copy the built JAR to `<IS_HOME>/repository/components/dropins/`, restart WSO2 IS, and verify OSGi registration of connector type `stalwart-scim`. Compilation, the factory smoke test, and manifest/DS descriptor checks do not replace runtime integration tests against the target WSO2 and Stalwart versions.
 
 ## License
 
