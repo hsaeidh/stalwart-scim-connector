@@ -113,13 +113,13 @@ The following example uses the container name `wso2-identity-wso2-1` and the WSO
 First, create a backup directory and move older copies of this connector out of `dropins`. Do not leave multiple connector versions in the directory:
 
 ```bash
-docker exec wso2-identity-wso2-1 sh -c 'D=/home/wso2carbon/wso2is-7.3.0/repository/components/dropins; B=/home/wso2carbon/wso2is-7.3.0/repository/components/backup/stalwart-scim; mkdir -p "$B"; find "$D" -maxdepth 1 -type f -name "org.stalwart.identity.provisioning.connector.scim-*.jar" -exec mv -f {} "$B"/ \\;'
+docker exec wso2-identity-wso2-1 sh -c 'D=/home/wso2carbon/wso2is-7.3.0/repository/components/dropins; B=/home/wso2carbon/wso2is-7.3.0/repository/components/backup/stalwart-scim; mkdir -p "$B"; find "$D" -maxdepth 1 -type f -name "org.stalwart.identity.provisioning.connector.scim-*.jar" -exec mv -f {} "$B"/ \;'
 ```
 
 Copy the version 1.0.8 JAR from the host into the container. Replace the Windows path with the actual path to the built/downloaded JAR:
 
 ```cmd
-docker cp "C:\\path\\org.stalwart.identity.provisioning.connector.scim-1.0.8.jar" wso2-identity-wso2-1:/home/wso2carbon/wso2is-7.3.0/repository/components/dropins/
+docker cp "C:\path\org.stalwart.identity.provisioning.connector.scim-1.0.8.jar" wso2-identity-wso2-1:/home/wso2carbon/wso2is-7.3.0/repository/components/dropins/
 ```
 
 Confirm that the JAR exists in the container:
@@ -144,9 +144,9 @@ DROPINS="$IS_HOME/repository/components/dropins"
 BACKUP="$IS_HOME/repository/components/backup/stalwart-scim"
 
 mkdir -p "$BACKUP"
-find "$DROPINS" -maxdepth 1 -type f \\
-  -name 'org.stalwart.identity.provisioning.connector.scim-*.jar' \\
-  -exec mv -f {} "$BACKUP"/ \\;
+find "$DROPINS" -maxdepth 1 -type f \
+  -name 'org.stalwart.identity.provisioning.connector.scim-*.jar' \
+  -exec mv -f {} "$BACKUP"/ \;
 
 cp org.stalwart.identity.provisioning.connector.scim-1.0.8.jar "$DROPINS"/
 chown wso2carbon:wso2 "$DROPINS/org.stalwart.identity.provisioning.connector.scim-1.0.8.jar"
