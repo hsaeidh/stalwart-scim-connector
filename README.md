@@ -36,7 +36,7 @@ The connector reads **local WSO2 claim URIs** from the provisioning entity and m
 | `name.familyName` | `http://wso2.org/claims/lastname` |
 | `active` | Optional Boolean claim; unset by default |
 
-Mapping can be disabled. When enabled, the email claim is mandatory; provisioning fails rather than sending the national identifier as Stalwart's `userName`. The active mapping expects a Boolean source claim. Do not map an inverse `accountDisabled` claim directly to `active` without an explicit inversion rule.
+Mapping can be disabled. When enabled, the email claim is mandatory; provisioning fails rather than sending the national identifier as Stalwart's `userName`. The active mapping expects a Boolean source claim. If the source is an inverse claim such as `accountDisabled`, enable **Invert active source value** so `accountDisabled=true` becomes SCIM `active=false`.
 
 The WSO2 connector configuration uses text fields for source claim URIs and a Boolean toggle. It does not currently provide a dynamic dropdown populated from the WSO2 claim catalog.
 
