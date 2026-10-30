@@ -26,8 +26,8 @@ public class StalwartSCIMConnectorServiceComponent {
 
     @Activate
     protected void activate(ComponentContext context) {
-        System.out.println(">>> STALWART-SCIM activate() ENTERED v1.0.6");
-        LOG.info(">>> STALWART-SCIM activate() ENTERED v1.0.6");
+        System.out.println(">>> STALWART-SCIM activate() ENTERED v1.0.7");
+        LOG.info(">>> STALWART-SCIM activate() ENTERED v1.0.7");
         try {
             BundleContext bundleContext = context.getBundleContext();
             System.out.println(">>> STALWART-SCIM BundleContext: " + bundleContext);
@@ -45,20 +45,20 @@ public class StalwartSCIMConnectorServiceComponent {
             System.out.println(">>> STALWART-SCIM Service registration: " + registration);
             LOG.info(">>> STALWART-SCIM Service registration: " + registration);
 
-            System.out.println(">>> STALWART-SCIM-CONNECTOR-READY v1.0.6");
-            LOG.info(">>> STALWART-SCIM-CONNECTOR-READY v1.0.6");
+            System.out.println(">>> STALWART-SCIM-CONNECTOR-READY v1.0.7");
+            LOG.info(">>> STALWART-SCIM-CONNECTOR-READY v1.0.7");
         } catch (RuntimeException | Error e) {
-            System.err.println(">>> STALWART-SCIM ACTIVATE FAILED v1.0.6: " + e);
+            System.err.println(">>> STALWART-SCIM ACTIVATE FAILED v1.0.7: " + e);
             e.printStackTrace(System.err);
-            LOG.error(">>> STALWART-SCIM ACTIVATE FAILED v1.0.6", e);
+            LOG.error(">>> STALWART-SCIM ACTIVATE FAILED v1.0.7", e);
             throw e;
         }
     }
 
     @Deactivate
     protected void deactivate(ComponentContext context) {
-        System.out.println(">>> STALWART-SCIM DEACTIVATE v1.0.6");
-        LOG.info(">>> STALWART-SCIM DEACTIVATE v1.0.6");
+        System.out.println(">>> STALWART-SCIM DEACTIVATE v1.0.7");
+        LOG.info(">>> STALWART-SCIM DEACTIVATE v1.0.7");
         if (registration != null) {
             try {
                 registration.unregister();
