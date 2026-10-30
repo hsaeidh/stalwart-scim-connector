@@ -9,6 +9,7 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import com.google.gson.JsonParseException;
 import org.apache.commons.collections.CollectionUtils;
 import org.apache.commons.lang.StringUtils;
 import org.apache.commons.logging.Log;
@@ -52,6 +53,8 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
     private static final String GROUP_SCHEMA = "urn:ietf:params:scim:schemas:core:2.0:Group";
     private static final String PATCH_SCHEMA = "urn:ietf:params:scim:api:messages:2.0:PatchOp";
     private static final String USERNAME_CLAIM = IdentityProvisioningConstants.USERNAME_CLAIM_URI;
+    private static final HttpClient HTTP_CLIENT = HttpClient.newBuilder()
+            .connectTimeout(Duration.ofSeconds(15)).build();
 
     private String baseUrl;
     private String bearerToken;
@@ -63,7 +66,6 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
     private String familyNameClaimUri = "http://wso2.org/claims/lastname";
     private String activeClaimUri = "";
     private boolean invertActiveClaim = false;
-    private HttpClient httpClient;
 
     @Override
     public void init(Property[] properties) throws IdentityProvisioningException {
@@ -98,7 +100,6 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
         if (!baseUrl.endsWith("/scim/v2")) {
             throw new IdentityProvisioningException("Base URL must end with /scim/v2, for example https://mail.example.com/scim/v2");
         }
-        httpClient = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(15)).build();
     }
 
     @Override
@@ -134,8 +135,15 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
         Map<ClaimMapping, List<String>> attrs = entity.getAttributes();
         String userName = targetUserName(attrs, entity.getEntityName());
         JsonObject user = userPayload(attrs, userName);
-        request("POST", "/Users", user);
-        updateUserGroupMemberships(entity, true);
+        // WSO2 can retry a failed provisioning event. Reuse an existing account so
+        // a later group-membership failure does not cause a duplicate-user conflict.
+        String existingId = findUserId(attrs, entity.getEntityName());
+        if (existingId == null) {
+            request("POST", "/Users", user);
+        } else {
+            log.info("Stalwart user already exists; continuing with membership reconciliation: " + userName);
+        }
+        updateUserGroupMemberships(entity);
     }
 
     private void updateUser(ProvisioningEntity entity) throws IdentityProvisioningException {
@@ -244,7 +252,7 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
         }
     }
 
-    private void updateUserGroupMemberships(ProvisioningEntity entity, boolean creatingUser)
+    private void updateUserGroupMemberships(ProvisioningEntity entity)
             throws IdentityProvisioningException {
         List<String> groups = claimValues(entity.getAttributes(), IdentityProvisioningConstants.GROUP_CLAIM_URI);
         if (groups != null) {
@@ -265,6 +273,21 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
         String userId = findUserIdByIdentifier(username);
         if (userId == null) {
             throw new IdentityProvisioningException("Stalwart user was not found for group membership: " + username);
+        }
+        JsonObject currentGroup = request("GET", "/Groups/" + pathSegment(groupId), null);
+        boolean alreadyMember = false;
+        if (currentGroup.has("members") && currentGroup.get("members").isJsonArray()) {
+            for (JsonElement current : currentGroup.getAsJsonArray("members")) {
+                if (current.isJsonObject() && current.getAsJsonObject().has("value")
+                        && userId.equals(current.getAsJsonObject().get("value").getAsString())) {
+                    alreadyMember = true;
+                    break;
+                }
+            }
+        }
+        // Make membership reconciliation safe to retry after partial provisioning.
+        if (add == alreadyMember) {
+            return;
         }
         if (add) {
             JsonObject member = new JsonObject();
@@ -422,7 +445,7 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
                 builder.header("Content-Type", "application/scim+json")
                         .method(method, HttpRequest.BodyPublishers.ofString("{}"));
             }
-            HttpResponse<String> response = httpClient.send(builder.build(), HttpResponse.BodyHandlers.ofString());
+            HttpResponse<String> response = HTTP_CLIENT.send(builder.build(), HttpResponse.BodyHandlers.ofString());
             int status = response.statusCode();
             if (status < 200 || status >= 300) {
                 throw new IdentityProvisioningException("Stalwart SCIM " + method + " " + path
@@ -435,7 +458,7 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new IdentityProvisioningException("Interrupted while calling Stalwart SCIM endpoint.", e);
-        } catch (IllegalStateException | IllegalArgumentException e) {
+        } catch (JsonParseException | IllegalStateException | IllegalArgumentException e) {
             throw new IdentityProvisioningException("Invalid Stalwart SCIM response or endpoint.", e);
         }
     }
