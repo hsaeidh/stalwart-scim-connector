@@ -21,52 +21,83 @@ import org.stalwart.identity.provisioning.connector.scim.StalwartSCIMProvisionin
 )
 public class StalwartSCIMConnectorServiceComponent {
 
-    private static final Log LOG = LogFactory.getLog(StalwartSCIMConnectorServiceComponent.class);
-    private ServiceRegistration<?> registration;
+    private static final Log LOG;
+
+    /*
+     * Keep class initialization deliberately small. The first marker proves
+     * that the JVM reached this class initializer; the second proves that
+     * commons-logging initialization completed.
+     */
+    static {
+        System.err.println(">>> STALWART-SCIM STATIC INIT ENTERING v1.0.8");
+        LOG = LogFactory.getLog(StalwartSCIMConnectorServiceComponent.class);
+        System.err.println(">>> STALWART-SCIM STATIC INIT DONE v1.0.8 log=" + LOG);
+    }
+
+    private ServiceRegistration<?> factoryRegistration;
+
+    public StalwartSCIMConnectorServiceComponent() {
+        super();
+        System.err.println(">>> STALWART-SCIM CONSTRUCTOR v1.0.8");
+    }
 
     @Activate
     protected void activate(ComponentContext context) {
-        System.out.println(">>> STALWART-SCIM activate() ENTERED v1.0.7");
-        LOG.info(">>> STALWART-SCIM activate() ENTERED v1.0.7");
+        System.err.println(">>> STALWART-SCIM ACTIVATE START v1.0.8");
         try {
+            if (context == null) {
+                throw new IllegalStateException("DS supplied a null ComponentContext.");
+            }
+
             BundleContext bundleContext = context.getBundleContext();
-            System.out.println(">>> STALWART-SCIM BundleContext: " + bundleContext);
-            LOG.info(">>> STALWART-SCIM BundleContext: " + bundleContext);
+            System.err.println(">>> STALWART-SCIM BundleContext: " + bundleContext);
+            if (bundleContext == null) {
+                throw new IllegalStateException("ComponentContext returned a null BundleContext.");
+            }
 
             StalwartSCIMProvisioningConnectorFactory factory =
                     new StalwartSCIMProvisioningConnectorFactory();
-            System.out.println(">>> STALWART-SCIM Factory instantiated: " + factory);
-            LOG.info(">>> STALWART-SCIM Factory instantiated: " + factory);
-            System.out.println(">>> STALWART-SCIM Connector type: " + factory.getConnectorType());
-            LOG.info(">>> STALWART-SCIM Connector type: " + factory.getConnectorType());
+            System.err.println(">>> STALWART-SCIM Factory created: " + factory);
+            System.err.println(">>> STALWART-SCIM Connector type: " + factory.getConnectorType());
 
-            registration = bundleContext.registerService(
+            factoryRegistration = bundleContext.registerService(
                     AbstractProvisioningConnectorFactory.class.getName(), factory, null);
-            System.out.println(">>> STALWART-SCIM Service registration: " + registration);
-            LOG.info(">>> STALWART-SCIM Service registration: " + registration);
 
-            System.out.println(">>> STALWART-SCIM-CONNECTOR-READY v1.0.7");
-            LOG.info(">>> STALWART-SCIM-CONNECTOR-READY v1.0.7");
-        } catch (RuntimeException | Error e) {
-            System.err.println(">>> STALWART-SCIM ACTIVATE FAILED v1.0.7: " + e);
-            e.printStackTrace(System.err);
-            LOG.error(">>> STALWART-SCIM ACTIVATE FAILED v1.0.7", e);
-            throw e;
+            System.err.println(">>> STALWART-SCIM Service registered: " + factoryRegistration);
+            if (factoryRegistration == null) {
+                throw new IllegalStateException("OSGi registerService returned null.");
+            }
+
+            System.err.println(">>> STALWART-SCIM ACTIVATE END v1.0.8 — READY");
+            LOG.info("Stalwart SCIM connector activated; service registration=" + factoryRegistration);
+        } catch (Throwable t) {
+            System.err.println(">>> STALWART-SCIM ACTIVATE FAILED v1.0.8: " + t);
+            t.printStackTrace(System.err);
+            LOG.error("Stalwart SCIM connector activation failed.", t);
+
+            if (t instanceof Error) {
+                throw (Error) t;
+            }
+            if (t instanceof RuntimeException) {
+                throw (RuntimeException) t;
+            }
+            throw new IllegalStateException("Stalwart SCIM connector activation failed.", t);
         }
     }
 
     @Deactivate
     protected void deactivate(ComponentContext context) {
-        System.out.println(">>> STALWART-SCIM DEACTIVATE v1.0.7");
-        LOG.info(">>> STALWART-SCIM DEACTIVATE v1.0.7");
-        if (registration != null) {
+        System.err.println(">>> STALWART-SCIM DEACTIVATE v1.0.8");
+        if (factoryRegistration != null) {
             try {
-                registration.unregister();
-                LOG.info(">>> STALWART-SCIM service unregistered.");
-            } catch (IllegalStateException e) {
-                LOG.warn(">>> STALWART-SCIM service was already unregistered.", e);
+                factoryRegistration.unregister();
+                System.err.println(">>> STALWART-SCIM service unregistered");
+            } catch (Throwable t) {
+                System.err.println(">>> STALWART-SCIM unregister failed: " + t);
+                t.printStackTrace(System.err);
+                LOG.warn("Stalwart SCIM service unregistration failed.", t);
             } finally {
-                registration = null;
+                factoryRegistration = null;
             }
         }
     }
