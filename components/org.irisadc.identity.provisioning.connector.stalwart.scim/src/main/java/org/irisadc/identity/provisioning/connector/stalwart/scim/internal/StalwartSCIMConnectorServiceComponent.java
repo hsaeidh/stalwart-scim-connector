@@ -32,6 +32,7 @@ public class StalwartSCIMConnectorServiceComponent {
             log.info("Stalwart SCIM 2.0 provisioning connector activated.");
         } catch (RuntimeException e) {
             log.error("Error while activating Stalwart SCIM provisioning connector.", e);
+            throw e;
         }
     }
 
