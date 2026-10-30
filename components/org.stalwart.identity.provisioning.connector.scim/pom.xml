@@ -5,7 +5,7 @@
     <parent>
         <groupId>org.stalwart.identity.provisioning</groupId>
         <artifactId>identity-outbound-provisioning-stalwart-scim</artifactId>
-        <version>1.0.3</version>
+        <version>1.0.4</version>
         <relativePath>../../pom.xml</relativePath>
     </parent>
     <artifactId>org.stalwart.identity.provisioning.connector.scim</artifactId>
@@ -40,7 +40,7 @@
                         <Embed-Dependency>gson;scope=compile|runtime</Embed-Dependency>
                         <Embed-Transitive>false</Embed-Transitive>
                         <Private-Package>org.stalwart.identity.provisioning.connector.scim.internal</Private-Package>
-                        <Export-Package>!org.stalwart.identity.provisioning.connector.scim.internal,org.stalwart.identity.provisioning.connector.scim.*;version="1.0.3"</Export-Package>
+                        <Export-Package>!org.stalwart.identity.provisioning.connector.scim.internal,org.stalwart.identity.provisioning.connector.scim.*;version="1.0.4"</Export-Package>
                     </instructions>
                 </configuration>
             </plugin>
