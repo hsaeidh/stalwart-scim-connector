@@ -29,11 +29,32 @@ jobs:
           set -euo pipefail
           JAR=$(find components/org.irisadc.identity.provisioning.connector.stalwart.scim/target -maxdepth 1 -type f -name '*.jar' ! -name '*-sources.jar' | head -n 1)
           test -n "$JAR"
-          MANIFEST=$(unzip -p "$JAR" META-INF/MANIFEST.MF)
-          grep -q '^Bundle-Version: 1.0.2' <<< "$MANIFEST"
-          grep -q 'org.wso2.carbon.identity.provisioning' <<< "$MANIFEST"
-          grep -q 'org.wso2.carbon.identity.application.common' <<< "$MANIFEST"
-          echo "Verified OSGi bundle: $JAR"
+          python3 - "$JAR" <<'PY'
+          import sys
+          import zipfile
+
+          jar = sys.argv[1]
+          with zipfile.ZipFile(jar) as archive:
+              raw = archive.read("META-INF/MANIFEST.MF").decode("utf-8")
+          unfolded = []
+          for line in raw.replace("\r\n", "\n").split("\n"):
+              if line.startswith(" ") and unfolded:
+                  unfolded[-1] += line[1:]
+              else:
+                  unfolded.append(line)
+          attributes = {}
+          for line in unfolded:
+              if ": " in line:
+                  key, value = line.split(": ", 1)
+                  attributes[key] = value
+          version = attributes.get("Bundle-Version", "")
+          imports = attributes.get("Import-Package", "")
+          assert version.startswith("1.0.2"), f"Unexpected Bundle-Version: {version!r}"
+          assert "org.wso2.carbon.identity.provisioning" in imports, "Missing WSO2 provisioning package import"
+          assert "org.wso2.carbon.identity.application.common" in imports, "Missing WSO2 application.common package import"
+          print(f"Verified {jar}: Bundle-Version={version}")
+          print("Verified WSO2 Import-Package entries.")
+          PY
       - name: Upload connector JAR
         uses: actions/upload-artifact@v4
         with:
