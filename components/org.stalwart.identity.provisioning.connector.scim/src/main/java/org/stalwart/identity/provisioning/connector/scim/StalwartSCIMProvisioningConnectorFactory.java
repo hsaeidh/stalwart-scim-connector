@@ -48,7 +48,7 @@ public class StalwartSCIMProvisioningConnectorFactory extends AbstractProvisioni
             properties.add(property(StalwartSCIMProvisioningConnectorConstants.USERNAME_CLAIM_URI,
                     "userName source WSO2 local claim URI", "http://wso2.org/claims/emailaddress", true, false, 5));
             properties.add(property(StalwartSCIMProvisioningConnectorConstants.EXTERNAL_ID_CLAIM_URI,
-                    "externalId source WSO2 local claim URI", "http://wso2.org/claims/username", false, false, 6));
+                    "Required immutable externalId source WSO2 local claim URI", "http://wso2.org/claims/username", true, false, 6));
             properties.add(property(StalwartSCIMProvisioningConnectorConstants.GIVEN_NAME_CLAIM_URI,
                     "name.givenName source WSO2 local claim URI", "http://wso2.org/claims/givenname", false, false, 7));
             properties.add(property(StalwartSCIMProvisioningConnectorConstants.FAMILY_NAME_CLAIM_URI,
