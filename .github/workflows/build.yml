@@ -170,6 +170,12 @@ jobs:
           assert 'RESOURCE_ID_CACHE' in source and 'CACHE_TTL_MILLIS' in source, (
               "Expected endpoint-scoped TTL resource ID cache"
           )
+          assert 'Semaphore' in source and 'sendWithLimit' in source, (
+              "Expected bounded concurrent SCIM HTTP requests"
+          )
+          assert 'requestAt(profileUpdateBaseUrl()' in source, (
+              "Expected a separate configurable profile-update SCIM endpoint"
+          )
           assert "targetUserIdentifier(attrs" in source, (
               "Group membership updates must resolve users through the stable identifier"
           )
