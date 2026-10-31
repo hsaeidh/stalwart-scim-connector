@@ -630,7 +630,8 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
         for (JsonElement element : body.getAsJsonArray("Operations")) {
             if (!element.isJsonObject() || !element.getAsJsonObject().has("op")) return false;
             String op = element.getAsJsonObject().get("op").getAsString();
-            if (!"replace".equalsIgnoreCase(op) && !"remove".equalsIgnoreCase(op)) return false;
+            if (!"replace".equalsIgnoreCase(op) && !"remove".equalsIgnoreCase(op)
+                    && !"add".equalsIgnoreCase(op)) return false;
         }
         return !body.getAsJsonArray("Operations").isEmpty();
     }
