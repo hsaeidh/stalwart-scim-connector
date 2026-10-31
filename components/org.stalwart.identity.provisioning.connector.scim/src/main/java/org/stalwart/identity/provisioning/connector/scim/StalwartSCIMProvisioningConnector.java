@@ -83,7 +83,7 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
     private boolean enableProfileUpdates = true;
     private String profileUpdateScimUrl;
     private int maxConcurrentRequests = 8;
-    private transient Semaphore requestSemaphore = new Semaphore(8, true);
+    private Semaphore requestSemaphore = new Semaphore(8, true);
 
     @Override
     public void init(Property[] properties) throws IdentityProvisioningException {
