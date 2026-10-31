@@ -22,7 +22,6 @@ import org.wso2.carbon.identity.provisioning.IdentityProvisioningException;
 import org.wso2.carbon.identity.provisioning.ProvisionedIdentifier;
 import org.wso2.carbon.identity.provisioning.ProvisioningEntity;
 import org.wso2.carbon.identity.provisioning.ProvisioningEntityType;
-import org.wso2.carbon.identity.provisioning.ProvisioningOperation;
 import org.wso2.carbon.identity.provisioning.ProvisioningUtil;
 
 import java.io.IOException;
@@ -700,10 +699,6 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
     private List<String> claimValues(Map<ClaimMapping, List<String>> attrs, String uri) {
         if (StringUtils.isBlank(uri) || attrs == null) return null;
         return ProvisioningUtil.getClaimValues(attrs, uri, getUserStoreDomainName());
-    }
-
-    private List<String> userNames(Map<ClaimMapping, List<String>> attrs) {
-        return claimValues(attrs, USERNAME_CLAIM);
     }
 
     private List<String> groupNames(Map<ClaimMapping, List<String>> attrs) {
