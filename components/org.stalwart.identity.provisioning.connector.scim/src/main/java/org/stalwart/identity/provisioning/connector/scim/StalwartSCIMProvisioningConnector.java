@@ -649,8 +649,17 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
         try {
             long delay = 250L * (1L << (attempt - 1));
             if (StringUtils.isNotBlank(retryAfter)) {
-                try { delay = Math.max(delay, Math.min(10_000L, Long.parseLong(retryAfter.trim()) * 1000L)); }
-                catch (NumberFormatException ignored) { /* Fall back to bounded exponential backoff. */ }
+                try {
+                    delay = Math.max(delay, Math.min(60_000L, Long.parseLong(retryAfter.trim()) * 1000L));
+                } catch (NumberFormatException ignored) {
+                    try {
+                        long retryAt = java.time.ZonedDateTime.parse(retryAfter,
+                                java.time.format.DateTimeFormatter.RFC_1123_DATE_TIME).toInstant().toEpochMilli();
+                        delay = Math.max(delay, Math.min(60_000L, Math.max(0L, retryAt - System.currentTimeMillis())));
+                    } catch (java.time.format.DateTimeParseException ignoredDate) {
+                        // Fall back to bounded exponential backoff for invalid headers.
+                    }
+                }
             }
             Thread.sleep(delay);
         } catch (InterruptedException e) {
