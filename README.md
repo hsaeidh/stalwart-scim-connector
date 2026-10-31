@@ -245,6 +245,10 @@ The connector exposes 15 connection properties. Configure them in the WSO2 manag
 | external-id-claim-uri | Yes | http://wso2.org/claims/username | Stable WSO2 identifier sent as externalId; must not change |
 | given-name-claim-uri | No | http://wso2.org/claims/givenname | Source for SCIM name.givenName |
 | family-name-claim-uri | No | http://wso2.org/claims/lastname | Source for SCIM name.familyName |
+| display-name-claim-uri | No | http://wso2.org/claims/displayname | Independent source for SCIM displayName |
+| enable-profile-updates | No | true | Enable or disable profile PATCH operations |
+| profile-update-scim-url | No | Empty | Optional separate SCIM base URL for profile PATCH requests |
+| max-concurrent-requests | No | 8 | Maximum simultaneous HTTP requests per connector instance (1-64) |
 | active-claim-uri | No | Empty | Optional Boolean claim for SCIM active |
 | invert-active-claim | No | false | Invert the Boolean active claim |
 | email-membership-group | No | Email | WSO2 group whose removal disables Stalwart authentication |
@@ -257,6 +261,7 @@ The connector uses the following default mapping:
 | http://wso2.org/claims/username | externalId | Stable identifier for future lookups |
 | http://wso2.org/claims/givenname | name.givenName | First component of the Stalwart display name |
 | http://wso2.org/claims/lastname | name.familyName | Second component of the Stalwart display name |
+| http://wso2.org/claims/displayname | displayName | Optional independent display-name claim |
 
 Make sure these are the exact local claim URIs available in your WSO2 user-store claim dialect. The claim display label is not a substitute for the URI. WSO2 must include both configured name claims in user update events for the connector to update the complete Stalwart display name.
 
