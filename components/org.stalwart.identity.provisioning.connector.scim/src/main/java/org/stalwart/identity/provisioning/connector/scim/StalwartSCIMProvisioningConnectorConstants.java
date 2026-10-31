@@ -18,4 +18,5 @@ public final class StalwartSCIMProvisioningConnectorConstants {
     public static final String ACTIVE_CLAIM_URI = "active-claim-uri";
     public static final String EMAIL_ALIASES_CLAIM_URI = "email-aliases-claim-uri";
     public static final String INVERT_ACTIVE_CLAIM = "invert-active-claim";
+    public static final String EMAIL_MEMBERSHIP_GROUP = "email-membership-group";
 }
