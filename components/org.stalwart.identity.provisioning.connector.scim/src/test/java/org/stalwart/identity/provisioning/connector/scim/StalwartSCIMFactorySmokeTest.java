@@ -26,8 +26,8 @@ public final class StalwartSCIMFactorySmokeTest {
         }
 
         List<Property> properties = factory.getConfigurationProperties();
-        if (properties == null || properties.size() != 12) {
-            throw new IllegalStateException("Expected 12 configuration properties, got: "
+        if (properties == null || properties.size() != 11) {
+            throw new IllegalStateException("Expected 11 configuration properties, got: "
                     + (properties == null ? "null" : properties.size()));
         }
 
@@ -51,7 +51,6 @@ public final class StalwartSCIMFactorySmokeTest {
                 StalwartSCIMProvisioningConnectorConstants.GIVEN_NAME_CLAIM_URI,
                 StalwartSCIMProvisioningConnectorConstants.FAMILY_NAME_CLAIM_URI,
                 StalwartSCIMProvisioningConnectorConstants.ACTIVE_CLAIM_URI,
-                StalwartSCIMProvisioningConnectorConstants.EMAIL_ALIASES_CLAIM_URI,
                 StalwartSCIMProvisioningConnectorConstants.INVERT_ACTIVE_CLAIM,
                 StalwartSCIMProvisioningConnectorConstants.EMAIL_MEMBERSHIP_GROUP
         };
@@ -78,7 +77,7 @@ public final class StalwartSCIMFactorySmokeTest {
         System.out.println("Connector type: " + factory.getConnectorType());
         System.out.println("Properties count: " + properties.size());
         System.out.println("Required claim mapping defaults: emailaddress -> userName, username -> externalId");
-        System.out.println("SMOKE TEST PASSED v1.0.9");
+        System.out.println("SMOKE TEST PASSED v2.0.0");
     }
 
     private static void assertDefault(Map<String, Property> properties, String name, String expected) {
