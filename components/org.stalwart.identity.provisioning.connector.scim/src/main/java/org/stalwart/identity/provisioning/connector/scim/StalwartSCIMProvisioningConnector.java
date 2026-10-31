@@ -40,6 +40,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * WSO2 outbound provisioning connector that speaks SCIM 2.0 directly to Stalwart.
@@ -59,6 +60,7 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
             .connectTimeout(Duration.ofSeconds(10)).build();
     private static final long CACHE_TTL_MILLIS = Duration.ofMinutes(5).toMillis();
     private static final ConcurrentMap<String, CacheEntry> RESOURCE_ID_CACHE = new ConcurrentHashMap<>();
+    private static final AtomicInteger CACHE_INSERTIONS = new AtomicInteger();
     private static final class CacheEntry {
         private final String id;
         private final long expiresAt;
@@ -588,7 +590,7 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
     private String findResourceId(String resource, String attribute, String value)
             throws IdentityProvisioningException {
         if (StringUtils.isBlank(value)) return null;
-        String cacheKey = resource + "|" + attribute + "|" + value.trim().toLowerCase(java.util.Locale.ROOT);
+        String cacheKey = cacheKey(resource, attribute, value);
         CacheEntry cached = RESOURCE_ID_CACHE.get(cacheKey);
         if (cached != null) {
             if (cached.isValid()) return cached.id;
@@ -606,8 +608,26 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
         }
         String id = resources.get(0).getAsJsonObject().has("id")
                 ? resources.get(0).getAsJsonObject().get("id").getAsString() : null;
-        if (StringUtils.isNotBlank(id)) RESOURCE_ID_CACHE.put(cacheKey, new CacheEntry(id));
+        if (StringUtils.isNotBlank(id)) cacheResourceId(resource, attribute, value, id);
         return id;
+    }
+
+    private String cacheKey(String resource, String attribute, String value) {
+        return baseUrl + "|" + resource + "|" + attribute + "|"
+                + value.trim().toLowerCase(java.util.Locale.ROOT);
+    }
+
+    private void cacheResourceId(String resource, String attribute, String value, String id) {
+        if (StringUtils.isBlank(value) || StringUtils.isBlank(id)) return;
+        RESOURCE_ID_CACHE.put(cacheKey(resource, attribute, value), new CacheEntry(id));
+        if (CACHE_INSERTIONS.incrementAndGet() % 256 == 0) {
+            long now = System.currentTimeMillis();
+            RESOURCE_ID_CACHE.entrySet().removeIf(entry -> entry.getValue().expiresAt <= now);
+        }
+    }
+
+    private void invalidateResourceId(String resource, String attribute, String value) {
+        if (StringUtils.isNotBlank(value)) RESOURCE_ID_CACHE.remove(cacheKey(resource, attribute, value));
     }
 
     private String profileUpdateBaseUrl() {
@@ -672,13 +692,12 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
                 String resource = "/Users".equals(path) ? "Users" : "/Groups".equals(path) ? "Groups" : null;
                 String attribute = "Users".equals(resource) ? "userName" : "displayName";
                 if (resource != null && body.has(attribute)) {
-                    RESOURCE_ID_CACHE.put(resource + "|" + attribute + "|"
-                            + body.get(attribute).getAsString().trim().toLowerCase(java.util.Locale.ROOT),
-                            new CacheEntry(parsed.get("id").getAsString()));
+                    cacheResourceId(resource, attribute, body.get(attribute).getAsString(),
+                            parsed.get("id").getAsString());
                 }
                 if ("Users".equals(resource) && body.has("externalId")) {
-                    RESOURCE_ID_CACHE.put("Users|externalId|" + body.get("externalId").getAsString()
-                            .trim().toLowerCase(java.util.Locale.ROOT), new CacheEntry(parsed.get("id").getAsString()));
+                    cacheResourceId("Users", "externalId", body.get("externalId").getAsString(),
+                            parsed.get("id").getAsString());
                 }
             }
             return parsed;
