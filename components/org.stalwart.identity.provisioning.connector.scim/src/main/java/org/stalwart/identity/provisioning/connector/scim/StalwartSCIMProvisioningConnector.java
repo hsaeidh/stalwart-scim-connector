@@ -132,6 +132,22 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
                 || !endpoint.getPath().endsWith("/scim/v2")) {
             throw new IdentityProvisioningException("Base URL must be an absolute HTTP(S) URL ending with /scim/v2 and must not contain credentials, query, or fragment.");
         }
+        if (StringUtils.isNotBlank(profileUpdateScimUrl)) {
+            URI profileEndpoint;
+            try {
+                profileEndpoint = URI.create(profileUpdateScimUrl);
+            } catch (IllegalArgumentException e) {
+                throw new IdentityProvisioningException("Profile update SCIM URL is not a valid URI.", e);
+            }
+            String profileScheme = profileEndpoint.getScheme();
+            if (!("https".equalsIgnoreCase(profileScheme) || "http".equalsIgnoreCase(profileScheme))
+                    || StringUtils.isBlank(profileEndpoint.getHost()) || profileEndpoint.getUserInfo() != null
+                    || profileEndpoint.getQuery() != null || profileEndpoint.getFragment() != null
+                    || !profileEndpoint.getPath().endsWith("/scim/v2")) {
+                throw new IdentityProvisioningException(
+                        "Profile update SCIM URL must be an absolute HTTP(S) URL ending with /scim/v2.");
+            }
+        }
         if (bearerToken.indexOf('\r') >= 0 || bearerToken.indexOf('\n') >= 0) {
             throw new IdentityProvisioningException("Stalwart SCIM bearer token contains an invalid line break.");
         }
