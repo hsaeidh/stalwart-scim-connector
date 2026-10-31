@@ -268,29 +268,6 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
         request("PATCH", "/Users/" + pathSegment(id), patchDocument(operations));
     }
 
-    /**
-     * Revokes Stalwart authentication when WSO2 removes the user from the
-     * configured email-access group. Stalwart maps SCIM User.active=false
-     * to disabling the account's authenticate permission.
-     */
-    private void disableStalwartAuthentication(Map<ClaimMapping, List<String>> attrs, String fallback)
-            throws IdentityProvisioningException {
-        String id = findUserId(attrs, fallback);
-        if (id == null) {
-            throw new IdentityProvisioningException(
-                    "Cannot disable Stalwart authentication: user was not found.");
-        }
-        JsonObject current = request("GET", "/Users/" + pathSegment(id), null);
-        JsonArray operations = new JsonArray();
-        addReplace(operations, "active", false);
-        if (patchChangesCurrent(current, operations)) {
-            request("PATCH", "/Users/" + pathSegment(id), patchDocument(operations));
-            log.info("Stalwart authentication disabled after removal from email membership group; userId=" + id);
-        } else {
-            log.debug("Stalwart authentication is already disabled; userId=" + id);
-        }
-    }
-
     private boolean isEmailMembershipGroup(String groupName) {
         if (StringUtils.isBlank(emailMembershipGroup) || StringUtils.isBlank(groupName)) {
             return false;
@@ -579,9 +556,11 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
     private String findUserId(Map<ClaimMapping, List<String>> attrs, String fallback)
             throws IdentityProvisioningException {
         String externalId = mappedValue(attrs, externalIdClaimUri);
+        // externalId is mandatory for connector-created accounts and is the
+        // authoritative key. Do not issue a second username lookup on every
+        // cold cache miss; use userName only when no externalId claim is supplied.
         if (StringUtils.isNotBlank(externalId)) {
-            String id = findResourceId("Users", "externalId", externalId);
-            if (id != null) return id;
+            return findResourceId("Users", "externalId", externalId);
         }
         return findResourceId("Users", "userName", targetUserName(attrs, fallback));
     }
@@ -594,9 +573,14 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
             id = findResourceId("Users", "externalId", identifier);
         }
         if (id != null) return id;
-        id = findResourceId("Users", "userName", candidate);
-        return id != null ? id : (candidate.equals(identifier) ? null
-                : findResourceId("Users", "userName", identifier));
+        // Email identifiers can legitimately be supplied by legacy group claims;
+        // numeric/stable identifiers are externalId and need no username fallback.
+        if (candidate.indexOf('@') >= 0) {
+            id = findResourceId("Users", "userName", candidate);
+            return id != null ? id : (candidate.equals(identifier) ? null
+                    : findResourceId("Users", "userName", identifier));
+        }
+        return null;
     }
 
     private String stripUserStoreDomain(String value) {
