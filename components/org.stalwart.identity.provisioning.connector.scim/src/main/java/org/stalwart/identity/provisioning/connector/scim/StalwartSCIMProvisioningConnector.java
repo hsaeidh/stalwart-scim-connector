@@ -633,11 +633,16 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
 
     private boolean postResourceNowExists(String path, JsonObject body) throws IdentityProvisioningException {
         if (body == null || !path.matches("^/(Users|Groups)$")) return false;
-        String resource = path.substring(1);
-        String attribute = "Users".equals(resource) ? "userName" : "displayName";
-        if (!body.has(attribute)) return false;
-        String value = body.get(attribute).getAsString();
-        return StringUtils.isNotBlank(value) && findResourceId(resource, attribute, value) != null;
+        if ("/Users".equals(path)) {
+            // A username collision is not sufficient: the existing account must
+            // carry the same stable externalId before a retried POST is accepted.
+            if (!body.has("externalId") || StringUtils.isBlank(body.get("externalId").getAsString())) {
+                return false;
+            }
+            return findResourceId("Users", "externalId", body.get("externalId").getAsString()) != null;
+        }
+        if (!body.has("displayName")) return false;
+        return findResourceId("Groups", "displayName", body.get("displayName").getAsString()) != null;
     }
 
     private void retryBackoff(int attempt, String retryAfter) throws IdentityProvisioningException {
