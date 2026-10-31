@@ -164,6 +164,12 @@ jobs:
           assert 'if (!isEmailMembershipGroup(group))' in source, (
               "Email entitlement must not be provisioned as a Stalwart Group"
           )
+          assert 'excludedAttributes=members' in source, (
+              "Group ID lookups must omit large members arrays"
+          )
+          assert 'request("GET", "/Groups/"' not in source, (
+              "Membership processing must not fetch full Group resources"
+          )
           assert 'RESOURCE_ID_CACHE' in source and 'CACHE_TTL_MILLIS' in source, (
               "Expected endpoint-scoped TTL resource ID cache"
           )
