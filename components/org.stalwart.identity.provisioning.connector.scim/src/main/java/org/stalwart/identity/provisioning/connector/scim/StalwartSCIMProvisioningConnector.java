@@ -344,20 +344,18 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
             throw new IdentityProvisioningException("A non-empty stable WSO2 externalId claim is required to create a Stalwart account.");
         }
         user.addProperty("externalId", externalId.trim());
-        JsonObject name = new JsonObject();
         String given = mappedValue(attrs, givenNameClaimUri);
         String family = mappedValue(attrs, familyNameClaimUri);
-        if (StringUtils.isNotBlank(given)) {
-            name.addProperty("givenName", given);
-        }
-        if (StringUtils.isNotBlank(family)) {
-            name.addProperty("familyName", family);
-        }
-        if (!name.isEmpty()) {
-            user.add("name", name);
-        }
         String displayName = mappedValue(attrs, displayNameClaimUri);
-        if (StringUtils.isNotBlank(displayName)) user.addProperty("displayName", displayName.trim());
+        if (StringUtils.isNotBlank(displayName)) {
+            user.addProperty("displayName", displayName.trim());
+        } else if (StringUtils.isNotBlank(given) && StringUtils.isNotBlank(family)) {
+            // Stalwart stores one display name; structured name parts are only
+            // fallback inputs when displayName/name.formatted is absent.
+            user.addProperty("displayName", joinName(given, family));
+        } else if (StringUtils.isNotBlank(given) || StringUtils.isNotBlank(family)) {
+            user.addProperty("displayName", StringUtils.defaultIfBlank(given, family).trim());
+        }
         // Email aliases are intentionally not provisioned. The primary address is immutable after creation.
         String active = mappedValue(attrs, activeClaimUri);
         if (StringUtils.isNotBlank(active)) {
@@ -376,15 +374,19 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
         String given = mappedValue(attrs, givenNameClaimUri);
         String family = mappedValue(attrs, familyNameClaimUri);
         String display = mappedValue(attrs, displayNameClaimUri);
-        // Update each supplied profile claim independently; absent claims are preserved.
-        if (includeProfile && StringUtils.isNotBlank(given)) {
-            addReplace(operations, "name.givenName", given.trim());
-        }
-        if (includeProfile && StringUtils.isNotBlank(family)) {
-            addReplace(operations, "name.familyName", family.trim());
-        }
+        // Stalwart persists one display name. Prefer the explicit WSO2
+        // displayName claim; otherwise compose it from the supplied name parts.
+        // WSO2 should include both name parts in the update event when no
+        // displayName claim is available, so a partial event cannot erase a name.
         if (includeProfile && StringUtils.isNotBlank(display)) {
             addReplace(operations, "displayName", display.trim());
+        } else if (includeProfile && (StringUtils.isNotBlank(given) || StringUtils.isNotBlank(family))) {
+            if (StringUtils.isNotBlank(given) && StringUtils.isNotBlank(family)) {
+                addReplace(operations, "displayName", joinName(given, family));
+            } else {
+                throw new IdentityProvisioningException(
+                        "Stalwart stores a single displayName. Supply the displayName claim or both givenName and familyName claims in the update event.");
+            }
         }
 
         return patchDocument(operations);
