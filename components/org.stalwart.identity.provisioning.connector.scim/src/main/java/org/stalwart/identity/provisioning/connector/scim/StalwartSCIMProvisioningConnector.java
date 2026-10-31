@@ -67,6 +67,7 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
     private String activeClaimUri = "";
     private String emailAliasesClaimUri = "";
     private boolean invertActiveClaim = false;
+    private String emailMembershipGroup = "Email";
 
     @Override
     public void init(Property[] properties) throws IdentityProvisioningException {
@@ -90,6 +91,8 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
                     case StalwartSCIMProvisioningConnectorConstants.EMAIL_ALIASES_CLAIM_URI -> emailAliasesClaimUri = value;
                     case StalwartSCIMProvisioningConnectorConstants.INVERT_ACTIVE_CLAIM ->
                             invertActiveClaim = Boolean.parseBoolean(value);
+                    case StalwartSCIMProvisioningConnectorConstants.EMAIL_MEMBERSHIP_GROUP ->
+                            emailMembershipGroup = value;
                     default -> log.debug("Ignoring unsupported Stalwart connector property: " + property.getName());
                 }
             }
@@ -177,6 +180,9 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
             if (deletedGroups != null) {
                 for (String group : deletedGroups) {
                     updateGroupMembership(group, targetUserName(attrs, entity.getEntityName()), false);
+                    if (isEmailMembershipGroup(group)) {
+                        disableStalwartAuthentication(attrs, entity.getEntityName());
+                    }
                 }
             }
         }
@@ -199,6 +205,36 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
                         + targetUserName(attrs, entity.getEntityName()));
             }
         }
+    }
+
+    /**
+     * Revokes Stalwart authentication when WSO2 removes the user from the
+     * configured email-access group. Stalwart maps SCIM User.active=false
+     * to disabling the account's authenticate permission.
+     */
+    private void disableStalwartAuthentication(Map<ClaimMapping, List<String>> attrs, String fallback)
+            throws IdentityProvisioningException {
+        String id = findUserId(attrs, fallback);
+        if (id == null) {
+            throw new IdentityProvisioningException(
+                    "Cannot disable Stalwart authentication: user was not found.");
+        }
+        JsonObject current = request("GET", "/Users/" + pathSegment(id), null);
+        JsonArray operations = new JsonArray();
+        addReplace(operations, "active", false);
+        if (patchChangesCurrent(current, operations)) {
+            request("PATCH", "/Users/" + pathSegment(id), patchDocument(operations));
+            log.info("Stalwart authentication disabled after removal from email membership group; userId=" + id);
+        } else {
+            log.debug("Stalwart authentication is already disabled; userId=" + id);
+        }
+    }
+
+    private boolean isEmailMembershipGroup(String groupName) {
+        if (StringUtils.isBlank(emailMembershipGroup) || StringUtils.isBlank(groupName)) {
+            return false;
+        }
+        return emailMembershipGroup.trim().equalsIgnoreCase(stripUserStoreDomain(groupName).trim());
     }
 
     private void deleteUser(ProvisioningEntity entity) throws IdentityProvisioningException {
