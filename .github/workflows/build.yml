@@ -70,7 +70,7 @@ jobs:
               f"Unexpected Bundle-StartLevel: {attributes.get('Bundle-StartLevel')!r}"
           )
 
-          expected_extender = 'osgi.extender;filter:="(&(osgi.extender=osgi.component)(version>=1.3.0)(!(version>=2.0.1)))"'
+          expected_extender = 'osgi.extender;filter:="(&(osgi.extender=osgi.component)(version>=1.3.0)(!(version>=2.0.0)))"'
           expected_ee = 'osgi.ee;filter:="(&(osgi.ee=JavaSE)(version>=21))"'
           assert require_capability.count("osgi.extender;filter") == 1, (
               "Expected exactly one SCR extender requirement: " + require_capability
