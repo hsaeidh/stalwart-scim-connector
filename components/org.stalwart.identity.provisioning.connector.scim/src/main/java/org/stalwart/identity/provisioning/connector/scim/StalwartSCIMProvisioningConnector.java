@@ -230,18 +230,19 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
         if (patch.getAsJsonArray("Operations").size() > 0) {
             String id = findUserId(attrs, entity.getEntityName());
             if (id != null) {
-                JsonObject current = request("GET", "/Users/" + pathSegment(id), null);
-                if (patchChangesCurrent(current, patch.getAsJsonArray("Operations"))) {
-                    requestAt(profileUpdateBaseUrl(), "PATCH", "/Users/" + pathSegment(id), patch);
-                } else {
-                    log.debug("Skipping unchanged user PATCH; userId=" + id + ", operation=UPDATE");
-                }
+                // Profile claims are authoritative deltas from WSO2. Avoid a
+                // read-before-write GET; SCIM replace operations are idempotent.
+                requestAt(profileUpdateBaseUrl(), "PATCH", "/Users/" + pathSegment(id), patch);
             } else {
                 throw new IdentityProvisioningException("Stalwart user was not found for update; stable externalId lookup failed.");
             }
         }
-        // Apply the group-based revocation last so an independently mapped
-        // active claim in the same WSO2 event cannot re-enable the account.
+        String activeClaim = mappedValue(attrs, activeClaimUri);
+        if (StringUtils.isNotBlank(activeClaim)) {
+            boolean activeValue = parseBooleanClaim(activeClaim, activeClaimUri);
+            setStalwartActive(attrs, entity.getEntityName(), invertActiveClaim ? !activeValue : activeValue);
+        }
+        // Email-group entitlement has precedence over an independently mapped active claim.
         if (emailMembershipRemoved || emailMembershipAdded) {
             // Group entitlement takes precedence over a simultaneous active claim.
             setStalwartActive(attrs, entity.getEntityName(), !emailMembershipRemoved);
@@ -508,11 +509,6 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
             addReplace(operations, "displayName", display.trim());
         }
 
-        String active = mappedValue(attrs, activeClaimUri);
-        if (StringUtils.isNotBlank(active)) {
-            boolean activeValue = parseBooleanClaim(active, activeClaimUri);
-            addReplace(operations, "active", invertActiveClaim ? !activeValue : activeValue);
-        }
         return patchDocument(operations);
     }
 
