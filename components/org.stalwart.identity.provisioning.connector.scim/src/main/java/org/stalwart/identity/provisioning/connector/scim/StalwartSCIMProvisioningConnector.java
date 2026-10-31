@@ -217,12 +217,17 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
         List<String> newGroups = claimValues(attrs, IdentityProvisioningConstants.NEW_GROUP_CLAIM_URI);
         List<String> deletedGroups = claimValues(attrs, IdentityProvisioningConstants.DELETED_GROUP_CLAIM_URI);
         boolean emailMembershipRemoved = false;
-        boolean emailMembershipAdded = false;
+        boolean emailMembershipAdded = newGroups != null
+                && newGroups.stream().anyMatch(this::isEmailMembershipGroup);
+        if (emailMembershipAdded && findUserId(attrs, entity.getEntityName()) == null) {
+            // Provision the account before processing any distribution-group deltas.
+            request("POST", "/Users", userPayload(attrs, targetUserName(attrs, entity.getEntityName())));
+        }
         if (CollectionUtils.isNotEmpty(newGroups) || CollectionUtils.isNotEmpty(deletedGroups)) {
             if (newGroups != null) {
                 for (String group : newGroups) {
                     if (isEmailMembershipGroup(group)) {
-                        emailMembershipAdded = true;
+                        // Email entitlement is represented by User.active, not a Stalwart Group.
                     } else {
                         updateGroupMembership(group, targetUserIdentifier(attrs, entity.getEntityName()), true);
                     }
@@ -239,12 +244,6 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
                     }
                 }
             }
-        }
-        if (emailMembershipAdded && findUserId(attrs, entity.getEntityName()) == null) {
-            // A user may be granted Email access before the initial USER POST
-            // reaches this connector. Create the account here rather than
-            // attempting to PATCH a resource that does not yet exist.
-            request("POST", "/Users", userPayload(attrs, targetUserName(attrs, entity.getEntityName())));
         }
         JsonObject patch = userPatch(attrs, enableProfileUpdates);
         if (patch.getAsJsonArray("Operations").size() > 0) {
