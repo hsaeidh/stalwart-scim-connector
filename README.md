@@ -1,14 +1,14 @@
 # Stalwart SCIM Provisioning Connector
 
-[![Build](https://github.com/hsaeidh/stalwart-scim-connector/actions/workflows/build.yml/badge.svg?branch=release/2.0.0)](https://github.com/hsaeidh/stalwart-scim-connector/actions/workflows/build.yml)
+[![Build](https://github.com/hsaeidh/stalwart-scim-connector/actions/workflows/build.yml/badge.svg?branch=release/2.0.1)](https://github.com/hsaeidh/stalwart-scim-connector/actions/workflows/build.yml)
 
 An outbound SCIM 2.0 provisioning connector for WSO2 Identity Server 7.3.x and Stalwart Enterprise.
 
-**Development version: 2.0.0**  
-**Branch: release/2.0.0**  
+**Development version: 2.0.1**  
+**Branch: release/2.0.1**  
 **Connector type: stalwart-scim**
 
-Version 2.0.0 retains the provisioning and activation work from 1.0.9 and introduces an immutable email identity policy. It also makes user-name updates use Stalwart's supported structured-name input and documents the resulting display-name behavior.
+Version 2.0.1 retains the provisioning and activation work from 1.0.9 and introduces an immutable email identity policy. It also makes user-name updates use Stalwart's supported structured-name input and documents the resulting display-name behavior.
 
 ## 1. What the connector does
 
@@ -27,22 +27,22 @@ The email address is used only when a Stalwart account is first created. The WSO
 
 Stalwart stores one display name, not separate given-name and family-name fields. It accepts the standard SCIM name object and, when neither displayName nor name.formatted is supplied, joins name.givenName and name.familyName into the stored display name. Stalwart returns the result as displayName and name.formatted; it does not return the original structured name parts.
 
-Accordingly, version 2.0.0 sends a SCIM PATCH of the name object containing both configured name claims. In Stalwart, the observable result is an updated display name such as “Saeed Mehdi”, not separately retrievable givenName and familyName attributes. This is Stalwart's data model, not a connector limitation that can be fixed by changing claim names.
+Accordingly, version 2.0.1 sends a SCIM PATCH of the name object containing both configured name claims. In Stalwart, the observable result is an updated display name such as “Saeed Mehdi”, not separately retrievable givenName and familyName attributes. This is Stalwart's data model, not a connector limitation that can be fixed by changing claim names.
 
-## 2. Version 2.0.0 changes
+## 2. Version 2.0.1 changes
 
-Version 2.0.0 retains the 1.0.9 implementation, including:
+Version 2.0.1 retains the 1.0.9 implementation, including:
 
 - Idempotent user and group creation.
 - Stable resource lookup by externalId before falling back to userName.
-- Group membership reconciliation that checks current membership before PATCH.
+- Group membership deltas are PATCHed without downloading the complete member list, avoiding Stalwart tooMany responses for large groups.
 - Removal from the configured email-access group disables Stalwart authentication through SCIM active=false.
 - The email-group removal rule is applied after normal attribute updates, so an active claim in the same event cannot re-enable the account.
 - Retry handling for transient I/O errors and HTTP 408, 429 and 5xx responses.
 - WSO2 JIT-originated events are not incorrectly suppressed by the outbound connector.
 - OSGi Declarative Services registration and activation diagnostics.
 
-New or changed in 2.0.0:
+New or changed in 2.0.1:
 
 1. **Primary email is immutable after account creation.** The connector sends userName only in POST /Users. It never includes userName in a user PATCH.
 2. **Email changes in WSO2 are ignored for existing Stalwart accounts.** They do not rename the Stalwart account or change its primary SMTP address.
@@ -98,7 +98,7 @@ Example request body:
 
 Stalwart stores the joined display name and returns it as displayName and name.formatted. It does not retain the structured parts as separate readable attributes.
 
-If the WSO2 event contains only one of the two configured claims, the connector skips the name update. This avoids overwriting a full name with an incomplete value. Check WSO2's outbound claim set if this warning appears.
+If only givenName or familyName is present, the connector PATCHes only that nested attribute. If displayName is supplied, it is PATCHed independently. Missing claims are left untouched.
 
 ### 3.3 Change the email address in WSO2
 
@@ -128,7 +128,7 @@ In Stalwart, active=false disables the account's authenticate permission. It doe
 
 This email-group removal rule is applied last. Therefore, if the same WSO2 event contains active=true, the group-removal rule still leaves the Stalwart account unable to authenticate.
 
-Adding a user to the Email group does not automatically reactivate an account that was previously disabled. Reactivation must be sent through the configured active claim or performed administratively.
+Adding a user to the Email group sets active=true and reactivates the Stalwart account. The Email group is an access entitlement only; it is never created or looked up as a Stalwart SCIM Group.
 
 ### 3.7 Change the configured active claim
 
@@ -142,18 +142,14 @@ For groups other than the configured email-access group:
 
 - Added membership is reconciled in the matching Stalwart SCIM Group.
 - Removed membership is removed from the matching Stalwart SCIM Group.
-- The connector checks the current membership before sending a PATCH, making repeated events safe.
+- The connector applies only the WSO2 membership delta and does not GET the full Group resource. This avoids tooMany responses for groups with more than 200 members. Duplicate add deltas may be rejected by Stalwart; WSO2 should emit only actual membership changes.
 - User resolution prefers externalId, so membership events do not depend on a mutable email address.
 
 The corresponding Stalwart Group must already exist or be provisioned through the configured group lifecycle.
 
-### 3.9 Create, update, and delete groups
+### 3.9 Stalwart distribution groups
 
-- Group creation sends displayName, externalId and resolvable members.
-- If the group already exists, the connector reconciles membership instead of creating a duplicate.
-- Group updates reconcile renamed display names and membership changes.
-- Group deletion sends SCIM DELETE for the matching group.
-- Stalwart places SCIM-created groups in the provisioning account's domain. The provisioning account must therefore belong to the intended tenant/domain and that domain must be enabled for SCIM.
+WSO2 GROUP entity lifecycle events (create/update/delete) are intentionally ignored. Provision the actual distribution groups in Stalwart separately. For USER events, NEW_GROUP_CLAIM_URI and DELETED_GROUP_CLAIM_URI drive membership PATCH operations. The configured Email entitlement group is excluded from Stalwart Group lookups and writes.
 
 ### 3.10 Delete a WSO2 user
 
@@ -170,7 +166,7 @@ The connector does not provision passwords. Stalwart SCIM does not store the pas
 - Transient I/O failures and HTTP 408, 429 and 5xx responses are retried up to three attempts with exponential backoff (250 ms, then 500 ms).
 - A duplicate POST returning HTTP 409 is treated as success only after the connector confirms that the resource now exists.
 - A repeated DELETE for an already absent resource is treated as successful.
-- Unchanged replacement-only PATCH operations are skipped after reading the current resource.
+- GET lookups are cached for five minutes per SCIM endpoint. POST response IDs are cached immediately. User profile updates and Email active-state changes use idempotent PATCH operations without a read-before-write GET. Only safe GET/DELETE/POST and replace/remove-only PATCH operations are retried; numeric Retry-After is honored.
 - Retries are in-process only. They are not a durable queue and cannot guarantee delivery if WSO2 stops while an event is being processed.
 
 ## 4. Requirements
@@ -190,7 +186,7 @@ The connector does not provision passwords. Stalwart SCIM does not store the pas
 - A Stalwart SCIM provisioning API key (Bearer token)
 - The WSO2 local emailaddress and username claims must be available to outbound provisioning
 - The configured externalId claim must be stable and non-empty
-- Both given-name and family-name claims should be present in user update events
+- Given-name, family-name and displayName claims are PATCHed independently when supplied
 
 ## 5. Prepare Stalwart
 
@@ -237,7 +233,7 @@ The first request checks endpoint routing, TLS and SCIM availability. The second
 
 ## 6. Connector configuration in WSO2
 
-The connector exposes 11 connection properties. Configure them in the WSO2 management console when creating the outbound provisioning connection of type stalwart-scim.
+The connector exposes 14 connection properties. Configure them in the WSO2 management console when creating the outbound provisioning connection of type stalwart-scim.
 
 | Property | Required | Default / example | Description |
 |---|---:|---|---|
@@ -301,12 +297,12 @@ Do not put the SCIM Bearer token in a public repository or an example configurat
 
 ### Build from source
 
-Clone the repository and select the 2.0.0 branch:
+Clone the repository and select the 2.0.1 branch:
 
 ~~~bash
 git clone https://github.com/hsaeidh/stalwart-scim-connector.git
 cd stalwart-scim-connector
-git checkout release/2.0.0
+git checkout release/2.0.1
 ~~~
 
 Build and run the project verification:
@@ -318,7 +314,7 @@ mvn -B -ntp clean verify
 The distributable bundle is:
 
 ~~~text
-components/org.stalwart.identity.provisioning.connector.scim/target/org.stalwart.identity.provisioning.connector.scim-2.0.0.jar
+components/org.stalwart.identity.provisioning.connector.scim/target/org.stalwart.identity.provisioning.connector.scim-2.0.1.jar
 ~~~
 
 ### Install in Docker WSO2
@@ -334,13 +330,13 @@ docker exec wso2-identity-wso2-1 sh -c "D=/home/wso2carbon/wso2is-7.3.0/reposito
 Copy the built JAR from the Windows host:
 
 ~~~cmd
-docker cp "C:\path\org.stalwart.identity.provisioning.connector.scim-2.0.0.jar" wso2-identity-wso2-1:/home/wso2carbon/wso2is-7.3.0/repository/components/dropins/
+docker cp "C:\path\org.stalwart.identity.provisioning.connector.scim-2.0.1.jar" wso2-identity-wso2-1:/home/wso2carbon/wso2is-7.3.0/repository/components/dropins/
 ~~~
 
 Check the JAR:
 
 ~~~cmd
-docker exec wso2-identity-wso2-1 sh -c "ls -lh /home/wso2carbon/wso2is-7.3.0/repository/components/dropins/org.stalwart.identity.provisioning.connector.scim-2.0.0.jar"
+docker exec wso2-identity-wso2-1 sh -c "ls -lh /home/wso2carbon/wso2is-7.3.0/repository/components/dropins/org.stalwart.identity.provisioning.connector.scim-2.0.1.jar"
 ~~~
 
 Restart WSO2:
@@ -361,15 +357,15 @@ find "$DROPINS" -maxdepth 1 -type f \
   -name 'org.stalwart.identity.provisioning.connector.scim-*.jar' \
   -exec mv -f {} "$BACKUP"/ \;
 
-cp components/org.stalwart.identity.provisioning.connector.scim/target/org.stalwart.identity.provisioning.connector.scim-2.0.0.jar "$DROPINS"/
-chown wso2carbon:wso2 "$DROPINS/org.stalwart.identity.provisioning.connector.scim-2.0.0.jar"
+cp components/org.stalwart.identity.provisioning.connector.scim/target/org.stalwart.identity.provisioning.connector.scim-2.0.1.jar "$DROPINS"/
+chown wso2carbon:wso2 "$DROPINS/org.stalwart.identity.provisioning.connector.scim-2.0.1.jar"
 ~~~
 
 Restart WSO2 using the normal service manager or startup procedure.
 
 ## 9. Verify OSGi activation and connector discovery
 
-The OSGi bundle must be loaded and the Declarative Services component must register the factory. Version 2.0.0 keeps the diagnostic markers so the activation sequence can be checked.
+The OSGi bundle must be loaded and the Declarative Services component must register the factory. Version 2.0.1 keeps the diagnostic markers so the activation sequence can be checked.
 
 Docker:
 
@@ -386,14 +382,14 @@ grep -i 'STALWART-SCIM' /path/to/wso2is-7.3.0/repository/logs/wso2carbon.log
 The successful sequence should include:
 
 ~~~text
->>> STALWART-SCIM STATIC INIT ENTERING v2.0.0
->>> STALWART-SCIM STATIC INIT DONE v2.0.0
->>> STALWART-SCIM CONSTRUCTOR v2.0.0
->>> STALWART-SCIM ACTIVATE START v2.0.0
+>>> STALWART-SCIM STATIC INIT ENTERING v2.0.1
+>>> STALWART-SCIM STATIC INIT DONE v2.0.1
+>>> STALWART-SCIM CONSTRUCTOR v2.0.1
+>>> STALWART-SCIM ACTIVATE START v2.0.1
 >>> STALWART-SCIM Factory created: ...
 >>> STALWART-SCIM Connector type: stalwart-scim
 >>> STALWART-SCIM Service registered: ...
->>> STALWART-SCIM ACTIVATE END v2.0.0 — READY
+>>> STALWART-SCIM ACTIVATE END v2.0.1 — READY
 ~~~
 
 Interpretation:
@@ -418,7 +414,7 @@ Do not try to fix a missing connector by renaming the service component or addin
 | HTTP 403 | Verify Enterprise licensing, allowScimProvisioning, tenant scope, scimAccess and account-management permissions |
 | HTTP 404 on user update | Verify externalId mapping and confirm that the Stalwart account has the same externalId |
 | User creation fails because externalId is empty | Ensure the configured WSO2 local username claim is included and has a non-empty value |
-| Email change in WSO2 does not change Stalwart | Expected in 2.0.0; primary userName and SMTP address are immutable after creation |
+| Email change in WSO2 does not change Stalwart | Expected in 2.0.1; primary userName and SMTP address are immutable after creation |
 | Name update is skipped | Check logs for the partial-name warning; make sure both givenname and lastname claims are included in the outbound event |
 | Name appears as one field in Stalwart | Expected; Stalwart stores displayName/name.formatted rather than separate structured name parts |
 | Group membership update fails | Confirm the Stalwart Group exists and that the WSO2 user can be resolved by externalId |
@@ -435,13 +431,13 @@ mvn -B -ntp clean verify
 
 The build runs the factory/configuration smoke test. GitHub Actions additionally verifies:
 
-- Bundle version 2.0.0 and symbolic name.
+- Bundle version 2.0.1 and symbolic name.
 - JavaSE 21 requirement.
 - Exactly one OSGi SCR extender requirement.
 - Generated Declarative Services descriptor and immediate activation method.
 - WSO2 provisioning package import ranges.
 - Bundle start level and lazy activation policy.
-- Version 2.0.0 static initialization, constructor and activation diagnostic markers.
+- Version 2.0.1 static initialization, constructor and activation diagnostic markers.
 - Nested Gson dependency.
 - No embedded WSO2 API classes.
 - No JAR signature files.
@@ -457,9 +453,9 @@ Apache License 2.0.
 
 ---
 
-# راهنمای فارسی کامل Connector نسخه 2.0.0
+# راهنمای فارسی کامل Connector نسخه 2.0.1
 
-این بخش رفتار نسخه **2.0.0** را در ارتباط بین **WSO2 Identity Server 7.3.x** و **Stalwart Enterprise SCIM 2.0** توضیح می‌دهد. مبنای این توضیحات، پیاده‌سازی همین شاخه است؛ رفتارهایی که به محتوای رویداد ارسالی WSO2 یا تنظیمات Stalwart وابسته‌اند، با همان شرط مشخص شده‌اند.
+این بخش رفتار نسخه **2.0.1** را در ارتباط بین **WSO2 Identity Server 7.3.x** و **Stalwart Enterprise SCIM 2.0** توضیح می‌دهد. مبنای این توضیحات، پیاده‌سازی همین شاخه است؛ رفتارهایی که به محتوای رویداد ارسالی WSO2 یا تنظیمات Stalwart وابسته‌اند، با همان شرط مشخص شده‌اند.
 
 ## ۱. منطق شناسه‌ها و نگاشت Claimها
 
@@ -550,7 +546,7 @@ URI دقیق Claimها مهم است؛ نام نمایشی Claim کافی نیس
 
 ## ۴. تغییر ایمیل کاربر در WSO2
 
-در نسخه 2.0.0 آدرس اصلی ایمیل Stalwart پس از ایجاد حساب **ثابت** است.
+در نسخه 2.0.1 آدرس اصلی ایمیل Stalwart پس از ایجاد حساب **ثابت** است.
 
 اگر Claim ایمیل کاربر در WSO2 تغییر کند:
 
@@ -674,7 +670,7 @@ Connector برای کاهش اثر رویدادهای تکراری و خطاها
 
 ## ۱۲. مواردی که این Connector انجام نمی‌دهد
 
-برای جلوگیری از برداشت اشتباه، نسخه 2.0.0 موارد زیر را انجام نمی‌دهد:
+برای جلوگیری از برداشت اشتباه، نسخه 2.0.1 موارد زیر را انجام نمی‌دهد:
 
 1. رمز عبور کاربر را به Stalwart Provision نمی‌کند.
 2. رمز عبور WSO2 را تغییر یا بازیابی نمی‌کند.
