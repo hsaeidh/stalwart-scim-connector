@@ -27,7 +27,7 @@ The email address is used only when a Stalwart account is first created. The WSO
 
 Stalwart stores one display name, not separate given-name and family-name fields. It accepts the standard SCIM name object and, when neither displayName nor name.formatted is supplied, joins name.givenName and name.familyName into the stored display name. Stalwart returns the result as displayName and name.formatted; it does not return the original structured name parts.
 
-Accordingly, version 2.0.1 sends a SCIM PATCH of the name object containing both configured name claims. In Stalwart, the observable result is an updated display name such as “Saeed Mehdi”, not separately retrievable givenName and familyName attributes. This is Stalwart's data model, not a connector limitation that can be fixed by changing claim names.
+Accordingly, version 2.0.1 writes the SCIM displayName attribute. It prefers the configured WSO2 displayName claim; otherwise it composes displayName from givenName and familyName. Stalwart does not persist the structured name parts as independently retrievable fields. If only one name part is present and no displayName claim is supplied, the connector rejects the incomplete update rather than overwriting the full display name.
 
 ## 2. Version 2.0.1 changes
 
@@ -47,8 +47,8 @@ New or changed in 2.0.1:
 1. **Primary email is immutable after account creation.** The connector sends userName only in POST /Users. It never includes userName in a user PATCH.
 2. **Email changes in WSO2 are ignored for existing Stalwart accounts.** They do not rename the Stalwart account or change its primary SMTP address.
 3. **Email alias synchronization is disabled.** The connector does not send the emails collection on create or update, and does not add or remove Stalwart aliases based on WSO2 email changes.
-4. **Name updates use the SCIM name object.** When both configured name claims are present in a WSO2 update event, the connector sends them together as name.givenName and name.familyName in one name object. Stalwart composes these into displayName/name.formatted.
-5. **Partial name events are handled conservatively.** If only one of the configured name claims is present, the connector skips that name update rather than accidentally replacing a complete display name with only a first or last name. Ensure WSO2 supplies both mapped claims in update events.
+4. **Name updates use the SCIM name object.** When either configured name claim is present, the connector evaluates the available name data and sends a displayName replacement when a complete value can be formed. The explicit displayName claim takes precedence; otherwise both name parts are required.
+5. **Name updates use Stalwart's actual data model.** The configured displayName claim takes precedence. If it is absent, the connector joins givenName and familyName into displayName. If only one name part is present and displayName is absent, provisioning fails clearly rather than silently replacing the full name with a partial value.
 6. **externalId is required when creating a user.** It must be a stable identifier and must not be changed after account creation. This is necessary so a changed WSO2 email address cannot cause the connector to lose track of the existing Stalwart account.
 7. The email-alias claim property has been removed from the connector configuration. Existing Stalwart aliases are left untouched by the connector.
 
