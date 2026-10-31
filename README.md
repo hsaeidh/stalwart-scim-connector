@@ -166,7 +166,7 @@ The connector does not provision passwords. Stalwart SCIM does not store the pas
 - Transient I/O failures and HTTP 408, 429 and 5xx responses are retried up to three attempts with exponential backoff (250 ms, then 500 ms).
 - A duplicate POST returning HTTP 409 is treated as success only after the connector confirms that the resource now exists.
 - A repeated DELETE for an already absent resource is treated as successful.
-- GET lookups are cached for five minutes per SCIM endpoint. Concurrent HTTP requests are bounded by max-concurrent-requests (default 8, range 1-64). POST response IDs are cached immediately. User profile updates and Email active-state changes use idempotent PATCH operations without a read-before-write GET. Only safe GET/DELETE/POST and replace/remove-only PATCH operations are retried; numeric Retry-After is honored.
+- GET lookups are cached for five minutes per SCIM endpoint. Concurrent HTTP requests are bounded by max-concurrent-requests (default 8, range 1-64). POST response IDs are cached immediately. User profile updates and Email active-state changes use idempotent PATCH operations without a read-before-write GET. Only safe GET/DELETE/POST and SCIM PATCH operations containing only add, remove or replace operations (all three are idempotent under RFC 7644 semantics) are retried; numeric Retry-After is honored.
 - Retries are in-process only. They are not a durable queue and cannot guarantee delivery if WSO2 stops while an event is being processed.
 
 ## 4. Requirements
