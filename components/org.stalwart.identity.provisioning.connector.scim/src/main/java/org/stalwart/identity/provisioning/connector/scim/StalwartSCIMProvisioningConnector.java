@@ -500,8 +500,11 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
     }
 
     private String cacheKey(String resource, String attribute, String value) {
-        return baseUrl + "|" + resource + "|" + attribute + "|"
-                + value.trim().toLowerCase(java.util.Locale.ROOT);
+        // Different provisioning principals can see different tenant-scoped IDs
+        // even when they share the same SCIM host.
+        return baseUrl + "|" + String.valueOf(userStoreDomainName) + "|"
+                + Integer.toHexString(StringUtils.defaultString(bearerToken).hashCode()) + "|"
+                + resource + "|" + attribute + "|" + value.trim().toLowerCase(java.util.Locale.ROOT);
     }
 
     private void cacheResourceId(String resource, String attribute, String value, String id) {
