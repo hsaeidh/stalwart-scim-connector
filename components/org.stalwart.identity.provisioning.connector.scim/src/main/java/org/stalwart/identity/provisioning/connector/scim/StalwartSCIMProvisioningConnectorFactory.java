@@ -53,6 +53,8 @@ public class StalwartSCIMProvisioningConnectorFactory extends AbstractProvisioni
                     "name.givenName source WSO2 local claim URI", "http://wso2.org/claims/givenname", false, false, 7));
             properties.add(property(StalwartSCIMProvisioningConnectorConstants.FAMILY_NAME_CLAIM_URI,
                     "name.familyName source WSO2 local claim URI", "http://wso2.org/claims/lastname", false, false, 8));
+            properties.add(property(StalwartSCIMProvisioningConnectorConstants.DISPLAY_NAME_CLAIM_URI,
+                    "displayName source WSO2 local claim URI", "http://wso2.org/claims/displayname", false, false, 9));
             properties.add(property(StalwartSCIMProvisioningConnectorConstants.ACTIVE_CLAIM_URI,
                     "active source WSO2 local Boolean claim URI (optional)", "", false, false, 9));
             Property invertActive = property(StalwartSCIMProvisioningConnectorConstants.INVERT_ACTIVE_CLAIM,
