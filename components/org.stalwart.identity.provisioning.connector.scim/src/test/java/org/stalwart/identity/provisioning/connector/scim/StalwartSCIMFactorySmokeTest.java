@@ -26,7 +26,7 @@ public final class StalwartSCIMFactorySmokeTest {
         }
 
         List<Property> properties = factory.getConfigurationProperties();
-        if (properties == null || properties.size() != 14) {
+        if (properties == null || properties.size() != 15) {
             throw new IllegalStateException("Expected 11 configuration properties, got: "
                     + (properties == null ? "null" : properties.size()));
         }
@@ -53,6 +53,7 @@ public final class StalwartSCIMFactorySmokeTest {
                 StalwartSCIMProvisioningConnectorConstants.DISPLAY_NAME_CLAIM_URI,
                 StalwartSCIMProvisioningConnectorConstants.ENABLE_PROFILE_UPDATES,
                 StalwartSCIMProvisioningConnectorConstants.PROFILE_UPDATE_SCIM_URL,
+                StalwartSCIMProvisioningConnectorConstants.MAX_CONCURRENT_REQUESTS,
                 StalwartSCIMProvisioningConnectorConstants.ACTIVE_CLAIM_URI,
                 StalwartSCIMProvisioningConnectorConstants.INVERT_ACTIVE_CLAIM,
                 StalwartSCIMProvisioningConnectorConstants.EMAIL_MEMBERSHIP_GROUP
@@ -78,6 +79,7 @@ public final class StalwartSCIMFactorySmokeTest {
                 "http://wso2.org/claims/displayname");
         assertDefault(byName, StalwartSCIMProvisioningConnectorConstants.ENABLE_PROFILE_UPDATES, "true");
         assertDefault(byName, StalwartSCIMProvisioningConnectorConstants.PROFILE_UPDATE_SCIM_URL, "");
+        assertDefault(byName, StalwartSCIMProvisioningConnectorConstants.MAX_CONCURRENT_REQUESTS, "8");
         assertDefault(byName, StalwartSCIMProvisioningConnectorConstants.INVERT_ACTIVE_CLAIM, "false");
         assertDefault(byName, StalwartSCIMProvisioningConnectorConstants.EMAIL_MEMBERSHIP_GROUP, "Email");
 
