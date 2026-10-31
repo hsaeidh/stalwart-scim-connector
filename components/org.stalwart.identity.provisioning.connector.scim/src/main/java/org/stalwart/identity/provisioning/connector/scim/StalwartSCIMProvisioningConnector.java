@@ -183,11 +183,12 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
         List<String> newGroups = claimValues(attrs, IdentityProvisioningConstants.NEW_GROUP_CLAIM_URI);
         List<String> deletedGroups = claimValues(attrs, IdentityProvisioningConstants.DELETED_GROUP_CLAIM_URI);
         boolean emailMembershipRemoved = false;
+        boolean emailMembershipAdded = false;
         if (CollectionUtils.isNotEmpty(newGroups) || CollectionUtils.isNotEmpty(deletedGroups)) {
             if (newGroups != null) {
                 for (String group : newGroups) {
                     if (isEmailMembershipGroup(group)) {
-                        setStalwartActive(attrs, entity.getEntityName(), true);
+                        emailMembershipAdded = true;
                     } else {
                         updateGroupMembership(group, targetUserIdentifier(attrs, entity.getEntityName()), true);
                     }
@@ -205,7 +206,7 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
                 }
             }
         }
-        JsonObject patch = enableProfileUpdates ? userPatch(attrs) : patchDocument(new JsonArray());
+        JsonObject patch = userPatch(attrs, enableProfileUpdates);
         if (patch.getAsJsonArray("Operations").size() > 0) {
             String id = findUserId(attrs, entity.getEntityName());
             if (id != null) {
@@ -221,8 +222,9 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
         }
         // Apply the group-based revocation last so an independently mapped
         // active claim in the same WSO2 event cannot re-enable the account.
-        if (emailMembershipRemoved) {
-            setStalwartActive(attrs, entity.getEntityName(), false);
+        if (emailMembershipRemoved || emailMembershipAdded) {
+            // Group entitlement takes precedence over a simultaneous active claim.
+            setStalwartActive(attrs, entity.getEntityName(), !emailMembershipRemoved);
         }
     }
 
@@ -450,18 +452,6 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
             if (!"replace".equalsIgnoreCase(operation.has("op") ? operation.get("op").getAsString() : "")) return true;
             String path = operation.has("path") ? operation.get("path").getAsString() : "";
             JsonElement wanted = operation.get("value");
-            if ("name".equals(path) && wanted != null && wanted.isJsonObject()) {
-                JsonObject name = wanted.getAsJsonObject();
-                String given = name.has("givenName") ? name.get("givenName").getAsString() : "";
-                String family = name.has("familyName") ? name.get("familyName").getAsString() : "";
-                String desiredDisplayName = joinName(given, family);
-                String currentDisplayName = current.has("displayName") ? current.get("displayName").getAsString()
-                        : current.has("name") && current.get("name").isJsonObject()
-                        && current.getAsJsonObject("name").has("formatted")
-                        ? current.getAsJsonObject("name").get("formatted").getAsString() : null;
-                if (desiredDisplayName.equals(currentDisplayName)) continue;
-                return true;
-            }
             JsonElement actual = current;
             for (String segment : path.split("\\.")) {
                 if (actual == null || !actual.isJsonObject() || !actual.getAsJsonObject().has(segment)) {
@@ -475,7 +465,7 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
         return false;
     }
 
-    private JsonObject userPatch(Map<ClaimMapping, List<String>> attrs)
+    private JsonObject userPatch(Map<ClaimMapping, List<String>> attrs, boolean includeProfile)
             throws IdentityProvisioningException {
         JsonArray operations = new JsonArray();
 
@@ -485,13 +475,13 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
         String family = mappedValue(attrs, familyNameClaimUri);
         String display = mappedValue(attrs, displayNameClaimUri);
         // Update each supplied profile claim independently; absent claims are preserved.
-        if (StringUtils.isNotBlank(given) || StringUtils.isNotBlank(family)) {
-            JsonObject name = new JsonObject();
-            if (StringUtils.isNotBlank(given)) name.addProperty("givenName", given.trim());
-            if (StringUtils.isNotBlank(family)) name.addProperty("familyName", family.trim());
-            addReplace(operations, "name", name);
+        if (includeProfile && StringUtils.isNotBlank(given)) {
+            addReplace(operations, "name.givenName", given.trim());
         }
-        if (StringUtils.isNotBlank(display)) {
+        if (includeProfile && StringUtils.isNotBlank(family)) {
+            addReplace(operations, "name.familyName", family.trim());
+        }
+        if (includeProfile && StringUtils.isNotBlank(display)) {
             addReplace(operations, "displayName", display.trim());
         }
 
@@ -651,7 +641,8 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
             }
             if (status == 408 || status == 429 || status >= 500) {
                 if ("POST".equals(method) && postResourceNowExists(path, body)) return new JsonObject();
-                boolean retrySafe = "GET".equals(method) || "DELETE".equals(method) || "POST".equals(method);
+                boolean retrySafe = "GET".equals(method) || "DELETE".equals(method) || "POST".equals(method)
+                        || ("PATCH".equals(method) && isIdempotentPatch(body));
                 if (retrySafe && attempt < maxAttempts) {
                     retryBackoff(attempt, response.headers().firstValue("Retry-After").orElse(null));
                     continue;
@@ -681,7 +672,8 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
             log.warn("Stalwart SCIM I/O failure; userId=" + resourceId + ", operation=" + method
                     + ", attempt=" + attempt, e);
             if ("POST".equals(method) && postResourceNowExists(path, body)) return new JsonObject();
-            if (!"GET".equals(method) && !"DELETE".equals(method) && !"POST".equals(method)) {
+            if (!"GET".equals(method) && !"DELETE".equals(method) && !"POST".equals(method)
+                    && !("PATCH".equals(method) && isIdempotentPatch(body))) {
                 throw new IdentityProvisioningException("I/O error during non-idempotent SCIM " + method
                         + " request; it was not retried to avoid duplicate side effects.", e);
             }
@@ -698,6 +690,16 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
         }
         }
         throw new IdentityProvisioningException("Stalwart SCIM request failed after retries.");
+    }
+
+    private boolean isIdempotentPatch(JsonObject body) {
+        if (body == null || !body.has("Operations") || !body.get("Operations").isJsonArray()) return false;
+        for (JsonElement element : body.getAsJsonArray("Operations")) {
+            if (!element.isJsonObject() || !element.getAsJsonObject().has("op")) return false;
+            String op = element.getAsJsonObject().get("op").getAsString();
+            if (!"replace".equalsIgnoreCase(op) && !"remove".equalsIgnoreCase(op)) return false;
+        }
+        return !body.getAsJsonArray("Operations").isEmpty();
     }
 
     private boolean postResourceNowExists(String path, JsonObject body) throws IdentityProvisioningException {
