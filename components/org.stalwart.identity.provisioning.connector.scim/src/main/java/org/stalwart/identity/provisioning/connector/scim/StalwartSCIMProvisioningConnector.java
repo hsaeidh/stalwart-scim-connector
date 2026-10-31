@@ -484,7 +484,8 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
             RESOURCE_ID_CACHE.remove(cacheKey, cached);
         }
         String filter = normalizeScimFilter(attribute + " Eq " + value);
-        String query = "?filter=" + URLEncoder.encode(filter, StandardCharsets.UTF_8) + "&count=2";
+        String query = "?filter=" + URLEncoder.encode(filter, StandardCharsets.UTF_8) + "&count=2"
+                + ("Groups".equals(resource) ? "&excludedAttributes=members" : "");
         JsonObject response = request("GET", "/" + resource + query, null);
         JsonArray resources = response.has("Resources") && response.get("Resources").isJsonArray()
                 ? response.getAsJsonArray("Resources") : new JsonArray();
