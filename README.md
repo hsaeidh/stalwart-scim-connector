@@ -328,7 +328,7 @@ The following commands use the container name wso2-identity-wso2-1 and WSO2 home
 Back up and move older copies of this connector out of dropins so WSO2 does not load multiple versions:
 
 ~~~cmd
-docker exec wso2-identity-wso2-1 sh -c "D=/home/wso2carbon/wso2is-7.3.0/repository/components/dropins; B=/home/wso2carbon/wso2is-7.3.0/repository/components/backup/stalwart-scim; mkdir -p $B; find $D -maxdepth 1 -type f -name 'org.stalwart.identity.provisioning.connector.scim-*.jar' -exec mv -f {} $B/ \\;"
+docker exec wso2-identity-wso2-1 sh -c "D=/home/wso2carbon/wso2is-7.3.0/repository/components/dropins; B=/home/wso2carbon/wso2is-7.3.0/repository/components/backup/stalwart-scim; mkdir -p $B; find $D -maxdepth 1 -type f -name 'org.stalwart.identity.provisioning.connector.scim-*.jar' -exec mv -f {} $B/ \;"
 ~~~
 
 Copy the built JAR from the Windows host:
