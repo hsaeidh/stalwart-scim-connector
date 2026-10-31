@@ -196,6 +196,10 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
             updateUser(entity);
         }
         updateUserGroupMemberships(entity);
+        List<String> initialGroups = groupNames(attrs);
+        if (initialGroups != null && initialGroups.stream().anyMatch(this::isEmailMembershipGroup)) {
+            setStalwartActive(attrs, entity.getEntityName(), true);
+        }
     }
 
     private void updateUser(ProvisioningEntity entity) throws IdentityProvisioningException {
@@ -225,6 +229,12 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
                     }
                 }
             }
+        }
+        if (emailMembershipAdded && findUserId(attrs, entity.getEntityName()) == null) {
+            // A user may be granted Email access before the initial USER POST
+            // reaches this connector. Create the account here rather than
+            // attempting to PATCH a resource that does not yet exist.
+            request("POST", "/Users", userPayload(attrs, targetUserName(attrs, entity.getEntityName())));
         }
         JsonObject patch = userPatch(attrs, enableProfileUpdates);
         if (patch.getAsJsonArray("Operations").size() > 0) {
