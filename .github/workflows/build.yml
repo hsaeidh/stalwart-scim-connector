@@ -1,7 +1,7 @@
 name: Build Stalwart SCIM Connector
 on:
   push:
-    branches: [ "main", "release/1.0.8" ]
+    branches: [ "main", "release/1.0.9", "release/1.0.9" ]
   pull_request:
   workflow_dispatch:
 permissions:
@@ -59,7 +59,7 @@ jobs:
           imports = attributes.get("Import-Package", "")
           service_component = attributes.get("Service-Component", "")
           require_capability = attributes.get("Require-Capability", "")
-          assert version == "1.0.8", f"Unexpected Bundle-Version: {version!r}"
+          assert version == "1.0.9", f"Unexpected Bundle-Version: {version!r}"
           assert attributes.get("Bundle-SymbolicName", "").split(";")[0] == (
               "org.stalwart.identity.provisioning.connector.scim"
           ), "Unexpected Bundle-SymbolicName"
@@ -117,12 +117,12 @@ jobs:
           assert root.attrib.get("deactivate") == "deactivate", "Missing deactivate method"
 
           for marker in (
-              "STALWART-SCIM STATIC INIT ENTERING v1.0.8",
-              "STALWART-SCIM STATIC INIT DONE v1.0.8",
-              "STALWART-SCIM CONSTRUCTOR v1.0.8",
-              "STALWART-SCIM ACTIVATE START v1.0.8",
-              "STALWART-SCIM ACTIVATE END v1.0.8",
-              "STALWART-SCIM ACTIVATE FAILED v1.0.8",
+              "STALWART-SCIM STATIC INIT ENTERING v1.0.9",
+              "STALWART-SCIM STATIC INIT DONE v1.0.9",
+              "STALWART-SCIM CONSTRUCTOR v1.0.9",
+              "STALWART-SCIM ACTIVATE START v1.0.9",
+              "STALWART-SCIM ACTIVATE END v1.0.9",
+              "STALWART-SCIM ACTIVATE FAILED v1.0.9",
           ):
               assert marker.encode() in class_data, f"Missing bytecode diagnostic marker: {marker}"
 
@@ -142,13 +142,13 @@ jobs:
           print("Verified exactly one SCR extender requirement and JavaSE >=21.")
           print("Verified Bundle-StartLevel=1 and Bundle-ActivationPolicy=lazy.")
           print("Verified WSO2 Import-Package ranges and no embedded WSO2 classes.")
-          print("Verified v1.0.8 static-init, constructor and activation diagnostic markers.")
+          print("Verified v1.0.9 static-init, constructor and activation diagnostic markers.")
           print("Verified nested Gson and unsigned JAR.")
           PY
       - name: Upload connector JAR
         uses: actions/upload-artifact@v4
         with:
-          name: stalwart-scim-connector-1.0.8
+          name: stalwart-scim-connector-1.0.9
           path: components/org.stalwart.identity.provisioning.connector.scim/target/*.jar
           if-no-files-found: error
           retention-days: 30
