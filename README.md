@@ -4,7 +4,7 @@
 
 An independent outbound SCIM 2.0 provisioning connector for **WSO2 Identity Server 7.3.x** and **Stalwart Enterprise**.
 
-**Current version: 1.0.8**
+**Current version: 1.0.9**
 
 ## Project developers
 
@@ -18,7 +18,7 @@ This connector allows WSO2 Identity Server to provision users and groups to Stal
 - Connector type: `stalwart-scim`
 - OSGi Bundle-SymbolicName: `org.stalwart.identity.provisioning.connector.scim`
 - Java package: `org.stalwart.identity.provisioning.connector.scim`
-- Version: `1.0.8`
+- Version: `1.0.9`
 - Runtime baseline: WSO2 Identity Framework 7.10.156 / WSO2 IS 7.3.x
 - Java runtime/build target: Java 21
 - SCIM endpoint: `https://<stalwart-host>/scim/v2`
@@ -73,7 +73,7 @@ mvn -B -ntp clean verify
 The distributable JAR is generated at:
 
 ```text
-components/org.stalwart.identity.provisioning.connector.scim/target/org.stalwart.identity.provisioning.connector.scim-1.0.8.jar
+components/org.stalwart.identity.provisioning.connector.scim/target/org.stalwart.identity.provisioning.connector.scim-1.0.9.jar
 ```
 
 The Maven build runs the factory/configuration smoke test. GitHub Actions additionally checks the OSGi manifest, Declarative Services descriptor, Java 21 requirement, SCR extender requirement, nested Gson dependency, diagnostic markers, absence of embedded WSO2 API classes and absence of JAR signatures.
@@ -116,16 +116,16 @@ First, create a backup directory and move older copies of this connector out of 
 docker exec wso2-identity-wso2-1 sh -c 'D=/home/wso2carbon/wso2is-7.3.0/repository/components/dropins; B=/home/wso2carbon/wso2is-7.3.0/repository/components/backup/stalwart-scim; mkdir -p "$B"; find "$D" -maxdepth 1 -type f -name "org.stalwart.identity.provisioning.connector.scim-*.jar" -exec mv -f {} "$B"/ \;'
 ```
 
-Copy the version 1.0.8 JAR from the host into the container. Replace the Windows path with the actual path to the built/downloaded JAR:
+Copy the version 1.0.9 JAR from the host into the container. Replace the Windows path with the actual path to the built/downloaded JAR:
 
 ```cmd
-docker cp "C:\path\org.stalwart.identity.provisioning.connector.scim-1.0.8.jar" wso2-identity-wso2-1:/home/wso2carbon/wso2is-7.3.0/repository/components/dropins/
+docker cp "C:\path\org.stalwart.identity.provisioning.connector.scim-1.0.9.jar" wso2-identity-wso2-1:/home/wso2carbon/wso2is-7.3.0/repository/components/dropins/
 ```
 
 Confirm that the JAR exists in the container:
 
 ```cmd
-docker exec wso2-identity-wso2-1 sh -c "ls -lh /home/wso2carbon/wso2is-7.3.0/repository/components/dropins/org.stalwart.identity.provisioning.connector.scim-1.0.8.jar"
+docker exec wso2-identity-wso2-1 sh -c "ls -lh /home/wso2carbon/wso2is-7.3.0/repository/components/dropins/org.stalwart.identity.provisioning.connector.scim-1.0.9.jar"
 ```
 
 Restart WSO2:
@@ -148,15 +148,15 @@ find "$DROPINS" -maxdepth 1 -type f \
   -name 'org.stalwart.identity.provisioning.connector.scim-*.jar' \
   -exec mv -f {} "$BACKUP"/ \;
 
-cp org.stalwart.identity.provisioning.connector.scim-1.0.8.jar "$DROPINS"/
-chown wso2carbon:wso2 "$DROPINS/org.stalwart.identity.provisioning.connector.scim-1.0.8.jar"
+cp org.stalwart.identity.provisioning.connector.scim-1.0.9.jar "$DROPINS"/
+chown wso2carbon:wso2 "$DROPINS/org.stalwart.identity.provisioning.connector.scim-1.0.9.jar"
 ```
 
 Adjust the owner/group if WSO2 runs under a different operating-system account. Restart WSO2 using the service manager or the deployment's normal startup scripts.
 
 ### 5. Verify OSGi bundle activation
 
-Version 1.0.8 prints explicit diagnostic markers to standard error. These markers help identify whether the class was loaded, the Declarative Services component was instantiated, its activation method ran, and the WSO2 provisioning factory was registered.
+Version 1.0.9 prints explicit diagnostic markers to standard error. These markers help identify whether the class was loaded, the Declarative Services component was instantiated, its activation method ran, and the WSO2 provisioning factory was registered.
 
 For Docker:
 
@@ -175,15 +175,15 @@ For a native WSO2 installation, inspect `<IS_HOME>/repository/logs/wso2carbon.lo
 The successful activation sequence should include markers similar to:
 
 ```text
->>> STALWART-SCIM STATIC INIT ENTERING v1.0.8
->>> STALWART-SCIM STATIC INIT DONE v1.0.8
->>> STALWART-SCIM CONSTRUCTOR v1.0.8
->>> STALWART-SCIM ACTIVATE START v1.0.8
+>>> STALWART-SCIM STATIC INIT ENTERING v1.0.9
+>>> STALWART-SCIM STATIC INIT DONE v1.0.9
+>>> STALWART-SCIM CONSTRUCTOR v1.0.9
+>>> STALWART-SCIM ACTIVATE START v1.0.9
 >>> STALWART-SCIM BundleContext: ...
 >>> STALWART-SCIM Factory created: ...
 >>> STALWART-SCIM Connector type: stalwart-scim
 >>> STALWART-SCIM Service registered: ...
->>> STALWART-SCIM ACTIVATE END v1.0.8 — READY
+>>> STALWART-SCIM ACTIVATE END v1.0.9 — READY
 ```
 
 If the sequence stops before the final READY marker, inspect the first missing marker and any accompanying exception. In particular:
@@ -222,6 +222,7 @@ The exact labels around the connection wizard can vary slightly with the WSO2 co
 | `active-claim-uri` | No | Empty | Optional Boolean source claim for SCIM `active` |
 | `email-aliases-claim-uri` | No | Empty | Optional multi-valued claim for additional email aliases |
 | `invert-active-claim` | No | `false` | Inverts the Boolean source value when mapping SCIM `active` |
+| `email-membership-group` | No | `Email` | WSO2 group whose removal revokes Stalwart authentication by setting SCIM `active=false` |
 
 The Bearer token is required. Do not use a user's password as the SCIM token.
 
@@ -253,6 +254,7 @@ If you change the claim URIs in the connection, use the exact local claim URI, n
 - Leave `active-claim-uri` empty if you do not want the connector to set the SCIM `active` attribute.
 - If configured, the source claim must contain Boolean `true` or `false`.
 - Stalwart maps SCIM `active=false` to disabling the account's `authenticate` permission; it does not delete the account.
+- When a user is removed from the configured `email-membership-group` (default: `Email`), the connector sets SCIM `active=false` in Stalwart. This rule takes precedence over an `active` claim included in the same WSO2 update event. Other group removals do not disable the account.
 - For an inverse source claim such as `accountDisabled`, set `invert-active-claim=true`.
 - Leave `email-aliases-claim-uri` empty unless you have a multi-valued local claim containing additional email aliases.
 - Stalwart derives the primary email address from SCIM `userName`; do not attempt to replace that primary address through the additional `emails` aliases mapping.
