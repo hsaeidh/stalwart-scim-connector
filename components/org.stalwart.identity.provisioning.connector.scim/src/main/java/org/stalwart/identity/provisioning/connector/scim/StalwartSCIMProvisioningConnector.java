@@ -64,6 +64,7 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
     private String externalIdClaimUri = "http://wso2.org/claims/username";
     private String givenNameClaimUri = "http://wso2.org/claims/givenname";
     private String familyNameClaimUri = "http://wso2.org/claims/lastname";
+    private String displayNameClaimUri = "http://wso2.org/claims/displayname";
     private String activeClaimUri = "";
     private boolean invertActiveClaim = false;
     private String emailMembershipGroup = "Email";
