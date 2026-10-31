@@ -470,17 +470,16 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
         // Never PATCH either one: changing userName changes the primary SMTP address.
         String given = mappedValue(attrs, givenNameClaimUri);
         String family = mappedValue(attrs, familyNameClaimUri);
-        if (StringUtils.isNotBlank(given) && StringUtils.isNotBlank(family)) {
+        String display = mappedValue(attrs, displayNameClaimUri);
+        // Update each supplied profile claim independently; absent claims are preserved.
+        if (StringUtils.isNotBlank(given) || StringUtils.isNotBlank(family)) {
             JsonObject name = new JsonObject();
-            name.addProperty("givenName", given.trim());
-            name.addProperty("familyName", family.trim());
+            if (StringUtils.isNotBlank(given)) name.addProperty("givenName", given.trim());
+            if (StringUtils.isNotBlank(family)) name.addProperty("familyName", family.trim());
             addReplace(operations, "name", name);
-        } else if (StringUtils.isNotBlank(given) || StringUtils.isNotBlank(family)) {
-            // Stalwart stores a single display name, not independent name parts.
-            // Avoid replacing a complete display name with a partial value when WSO2
-            // sends only one of the two configured claims in an update event.
-            log.warn("Skipping Stalwart name update because the provisioning event did not contain both "
-                    + "given-name and family-name claims. Ensure both mapped claims are included in WSO2 updates.");
+        }
+        if (StringUtils.isNotBlank(display)) {
+            addReplace(operations, "displayName", display.trim());
         }
 
         String active = mappedValue(attrs, activeClaimUri);
