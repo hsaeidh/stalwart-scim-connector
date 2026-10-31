@@ -61,6 +61,8 @@ public class StalwartSCIMProvisioningConnectorFactory extends AbstractProvisioni
                     "Invert active source value (for accountDisabled)", "false", false, false, 11);
             invertActive.setType("boolean");
             properties.add(invertActive);
+            properties.add(property(StalwartSCIMProvisioningConnectorConstants.EMAIL_MEMBERSHIP_GROUP,
+                    "WSO2 group that grants email access", "Email", false, false, 12));
 
             System.out.println(">>> STALWART-SCIM getConfigurationProperties() returned "
                     + properties.size() + " properties");
