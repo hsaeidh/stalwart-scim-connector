@@ -183,7 +183,7 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
                         // Do not make it depend on a corresponding Stalwart Group resource.
                         emailMembershipRemoved = true;
                     } else {
-                        updateGroupMembership(group, targetUserName(attrs, entity.getEntityName()), false);
+                        updateGroupMembership(group, targetUserIdentifier(attrs, entity.getEntityName()), false);
                     }
                 }
             }
