@@ -48,19 +48,19 @@ public class StalwartSCIMProvisioningConnectorFactory extends AbstractProvisioni
             properties.add(property(StalwartSCIMProvisioningConnectorConstants.USERNAME_CLAIM_URI,
                     "userName source WSO2 local claim URI", "http://wso2.org/claims/emailaddress", true, false, 5));
             properties.add(property(StalwartSCIMProvisioningConnectorConstants.EXTERNAL_ID_CLAIM_URI,
-                    "externalId source WSO2 local claim URI", "http://wso2.org/claims/username", false, false, 6));
+                    "Required immutable externalId source WSO2 local claim URI", "http://wso2.org/claims/username", true, false, 6));
             properties.add(property(StalwartSCIMProvisioningConnectorConstants.GIVEN_NAME_CLAIM_URI,
                     "name.givenName source WSO2 local claim URI", "http://wso2.org/claims/givenname", false, false, 7));
             properties.add(property(StalwartSCIMProvisioningConnectorConstants.FAMILY_NAME_CLAIM_URI,
                     "name.familyName source WSO2 local claim URI", "http://wso2.org/claims/lastname", false, false, 8));
             properties.add(property(StalwartSCIMProvisioningConnectorConstants.ACTIVE_CLAIM_URI,
                     "active source WSO2 local Boolean claim URI (optional)", "", false, false, 9));
-            properties.add(property(StalwartSCIMProvisioningConnectorConstants.EMAIL_ALIASES_CLAIM_URI,
-                    "Optional multi-valued WSO2 local claim URI for additional email aliases", "", false, false, 10));
             Property invertActive = property(StalwartSCIMProvisioningConnectorConstants.INVERT_ACTIVE_CLAIM,
-                    "Invert active source value (for accountDisabled)", "false", false, false, 11);
+                    "Invert active source value (for accountDisabled)", "false", false, false, 10);
             invertActive.setType("boolean");
             properties.add(invertActive);
+            properties.add(property(StalwartSCIMProvisioningConnectorConstants.EMAIL_MEMBERSHIP_GROUP,
+                    "WSO2 group that grants email access", "Email", false, false, 11));
 
             System.out.println(">>> STALWART-SCIM getConfigurationProperties() returned "
                     + properties.size() + " properties");
