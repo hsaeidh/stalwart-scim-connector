@@ -404,9 +404,10 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
         user.add("schemas", schemas);
         user.addProperty("userName", userName);
         String externalId = mappedValue(attrs, externalIdClaimUri);
-        if (StringUtils.isNotBlank(externalId)) {
-            user.addProperty("externalId", externalId);
+        if (StringUtils.isBlank(externalId)) {
+            throw new IdentityProvisioningException("A non-empty stable WSO2 externalId claim is required to create a Stalwart account.");
         }
+        user.addProperty("externalId", externalId.trim());
         JsonObject name = new JsonObject();
         String given = mappedValue(attrs, givenNameClaimUri);
         String family = mappedValue(attrs, familyNameClaimUri);
