@@ -29,21 +29,21 @@ public class StalwartSCIMConnectorServiceComponent {
      * commons-logging initialization completed.
      */
     static {
-        System.err.println(">>> STALWART-SCIM STATIC INIT ENTERING v2.0.0");
+        System.err.println(">>> STALWART-SCIM STATIC INIT ENTERING v2.0.1");
         LOG = LogFactory.getLog(StalwartSCIMConnectorServiceComponent.class);
-        System.err.println(">>> STALWART-SCIM STATIC INIT DONE v2.0.0 log=" + LOG);
+        System.err.println(">>> STALWART-SCIM STATIC INIT DONE v2.0.1 log=" + LOG);
     }
 
     private ServiceRegistration<?> factoryRegistration;
 
     public StalwartSCIMConnectorServiceComponent() {
         super();
-        System.err.println(">>> STALWART-SCIM CONSTRUCTOR v2.0.0");
+        System.err.println(">>> STALWART-SCIM CONSTRUCTOR v2.0.1");
     }
 
     @Activate
     protected void activate(ComponentContext context) {
-        System.err.println(">>> STALWART-SCIM ACTIVATE START v2.0.0");
+        System.err.println(">>> STALWART-SCIM ACTIVATE START v2.0.1");
         try {
             if (context == null) {
                 throw new IllegalStateException("DS supplied a null ComponentContext.");
@@ -68,10 +68,10 @@ public class StalwartSCIMConnectorServiceComponent {
                 throw new IllegalStateException("OSGi registerService returned null.");
             }
 
-            System.err.println(">>> STALWART-SCIM ACTIVATE END v2.0.0 — READY");
+            System.err.println(">>> STALWART-SCIM ACTIVATE END v2.0.1 — READY");
             LOG.info("Stalwart SCIM connector activated; service registration=" + factoryRegistration);
         } catch (Throwable t) {
-            System.err.println(">>> STALWART-SCIM ACTIVATE FAILED v2.0.0: " + t);
+            System.err.println(">>> STALWART-SCIM ACTIVATE FAILED v2.0.1: " + t);
             t.printStackTrace(System.err);
             LOG.error("Stalwart SCIM connector activation failed.", t);
 
@@ -87,7 +87,7 @@ public class StalwartSCIMConnectorServiceComponent {
 
     @Deactivate
     protected void deactivate(ComponentContext context) {
-        System.err.println(">>> STALWART-SCIM DEACTIVATE v2.0.0");
+        System.err.println(">>> STALWART-SCIM DEACTIVATE v2.0.1");
         if (factoryRegistration != null) {
             try {
                 factoryRegistration.unregister();
