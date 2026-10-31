@@ -82,6 +82,7 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
     private boolean invertActiveClaim = false;
     private String emailMembershipGroup = "Email";
     private boolean enableProfileUpdates = true;
+    private String profileUpdateScimUrl;
 
     @Override
     public void init(Property[] properties) throws IdentityProvisioningException {
@@ -103,6 +104,7 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
                     case StalwartSCIMProvisioningConnectorConstants.FAMILY_NAME_CLAIM_URI -> familyNameClaimUri = value;
                     case StalwartSCIMProvisioningConnectorConstants.DISPLAY_NAME_CLAIM_URI -> displayNameClaimUri = value;
                     case StalwartSCIMProvisioningConnectorConstants.ENABLE_PROFILE_UPDATES -> enableProfileUpdates = Boolean.parseBoolean(value);
+                    case StalwartSCIMProvisioningConnectorConstants.PROFILE_UPDATE_SCIM_URL -> profileUpdateScimUrl = trimTrailingSlash(value);
                     case StalwartSCIMProvisioningConnectorConstants.ACTIVE_CLAIM_URI -> activeClaimUri = value;
                     case StalwartSCIMProvisioningConnectorConstants.INVERT_ACTIVE_CLAIM ->
                             invertActiveClaim = Boolean.parseBoolean(value);
@@ -212,7 +214,7 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
             if (id != null) {
                 JsonObject current = request("GET", "/Users/" + pathSegment(id), null);
                 if (patchChangesCurrent(current, patch.getAsJsonArray("Operations"))) {
-                    request("PATCH", "/Users/" + pathSegment(id), patch);
+                    requestAt(profileUpdateBaseUrl(), "PATCH", "/Users/" + pathSegment(id), patch);
                 } else {
                     log.debug("Skipping unchanged user PATCH; userId=" + id + ", operation=UPDATE");
                 }
@@ -271,6 +273,8 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
         String id = findUserId(entity.getAttributes(), entity.getEntityName());
         if (id != null) {
             request("DELETE", "/Users/" + pathSegment(id), null);
+            invalidateResourceId("Users", "externalId", mappedValue(entity.getAttributes(), externalIdClaimUri));
+            invalidateResourceId("Users", "userName", targetUserName(entity.getAttributes(), entity.getEntityName()));
         }
     }
 
@@ -369,6 +373,7 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
         String id = findResourceId("Groups", "displayName", groupName);
         if (id != null) {
             request("DELETE", "/Groups/" + pathSegment(id), null);
+            invalidateResourceId("Groups", "displayName", groupName);
         }
     }
 
@@ -605,13 +610,22 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
         return id;
     }
 
+    private String profileUpdateBaseUrl() {
+        return enableProfileUpdates && StringUtils.isNotBlank(profileUpdateScimUrl) ? profileUpdateScimUrl : baseUrl;
+    }
+
     private JsonObject request(String method, String path, JsonObject body) throws IdentityProvisioningException {
+        return requestAt(baseUrl, method, path, body);
+    }
+
+    private JsonObject requestAt(String endpointBaseUrl, String method, String path, JsonObject body)
+            throws IdentityProvisioningException {
         final int maxAttempts = 3;
         String resourceId = resourceIdFromPath(path);
         for (int attempt = 1; attempt <= maxAttempts; attempt++) {
         try {
             HttpRequest.Builder builder = HttpRequest.newBuilder()
-                    .uri(URI.create(baseUrl + path))
+                    .uri(URI.create(endpointBaseUrl + path))
                     .timeout(Duration.ofSeconds(30))
                     .header("Authorization", "Bearer " + bearerToken)
                     .header("Accept", "application/scim+json");
@@ -681,7 +695,7 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
                 throw new IdentityProvisioningException("I/O error while calling Stalwart SCIM endpoint after "
                         + maxAttempts + " attempts.", e);
             }
-            retryBackoff(attempt);
+            retryBackoff(attempt, null);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new IdentityProvisioningException("Interrupted while calling Stalwart SCIM endpoint.", e);
