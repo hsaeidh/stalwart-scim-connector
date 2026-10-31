@@ -18,6 +18,7 @@ public final class StalwartSCIMProvisioningConnectorConstants {
     public static final String DISPLAY_NAME_CLAIM_URI = "display-name-claim-uri";
     public static final String ENABLE_PROFILE_UPDATES = "enable-profile-updates";
     public static final String PROFILE_UPDATE_SCIM_URL = "profile-update-scim-url";
+    public static final String MAX_CONCURRENT_REQUESTS = "max-concurrent-requests";
     public static final String ACTIVE_CLAIM_URI = "active-claim-uri";
     public static final String INVERT_ACTIVE_CLAIM = "invert-active-claim";
     public static final String EMAIL_MEMBERSHIP_GROUP = "email-membership-group";
