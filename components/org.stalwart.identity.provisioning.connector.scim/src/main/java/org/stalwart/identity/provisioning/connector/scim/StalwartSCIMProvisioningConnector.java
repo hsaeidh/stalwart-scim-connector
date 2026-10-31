@@ -34,8 +34,6 @@ import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -54,7 +52,6 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
     private static final Log log = LogFactory.getLog(StalwartSCIMProvisioningConnector.class);
 
     private static final String USER_SCHEMA = "urn:ietf:params:scim:schemas:core:2.0:User";
-    private static final String GROUP_SCHEMA = "urn:ietf:params:scim:schemas:core:2.0:Group";
     private static final String PATCH_SCHEMA = "urn:ietf:params:scim:api:messages:2.0:PatchOp";
     private static final String USERNAME_CLAIM = IdentityProvisioningConstants.USERNAME_CLAIM_URI;
     private static final HttpClient HTTP_CLIENT = HttpClient.newBuilder()
@@ -298,105 +295,6 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
         }
     }
 
-    private void createGroup(ProvisioningEntity entity) throws IdentityProvisioningException {
-        Map<ClaimMapping, List<String>> attrs = entity.getAttributes();
-        List<String> names = groupNames(attrs);
-        String displayName = CollectionUtils.isNotEmpty(names) ? names.get(0) : entity.getEntityName();
-        // Bulk/JIT delivery can invoke the same create event more than once.
-        // Check by stable group name before POST; the request layer also resolves
-        // a concurrent duplicate POST after a 409 response.
-        String existingId = findResourceId("Groups", "displayName", displayName);
-        if (existingId != null) {
-            log.info("Stalwart group already exists; reconciling memberships: " + displayName);
-            List<String> existingUsers = userNames(attrs);
-            if (existingUsers != null) {
-                for (String user : existingUsers) {
-                    updateGroupMembership(displayName, user, true);
-                }
-            }
-            return;
-        }
-
-        JsonObject group = new JsonObject();
-        JsonArray schemas = new JsonArray();
-        schemas.add(GROUP_SCHEMA);
-        group.add("schemas", schemas);
-        group.addProperty("displayName", displayName);
-        group.addProperty("externalId", displayName);
-        JsonArray members = new JsonArray();
-        List<String> users = userNames(attrs);
-        if (users != null) {
-            for (String user : users) {
-                JsonObject member = resolveMember(user);
-                members.add(member);
-            }
-        }
-        if (!members.isEmpty()) {
-            group.add("members", members);
-        }
-        request("POST", "/Groups", group);
-    }
-
-    private void updateGroup(ProvisioningEntity entity) throws IdentityProvisioningException {
-        Map<ClaimMapping, List<String>> attrs = entity.getAttributes();
-        List<String> names = groupNames(attrs);
-        String groupName = CollectionUtils.isNotEmpty(names) ? names.get(0) : entity.getEntityName();
-        String oldName = ProvisioningUtil.getAttributeValue(entity, IdentityProvisioningConstants.OLD_GROUP_NAME_CLAIM_URI);
-        String lookupName = StringUtils.isNotBlank(oldName) ? oldName : groupName;
-        String groupId = findResourceId("Groups", "displayName", lookupName);
-        if (groupId == null) {
-            throw new IdentityProvisioningException("Stalwart group was not found: " + lookupName);
-        }
-        JsonArray operations = new JsonArray();
-        if (StringUtils.isNotBlank(oldName) && !oldName.equals(groupName)) {
-            addReplace(operations, "displayName", groupName);
-        }
-        JsonObject currentGroup = request("GET", "/Groups/" + pathSegment(groupId), null);
-        java.util.Set<String> currentMemberIds = new java.util.HashSet<>();
-        if (currentGroup.has("members") && currentGroup.get("members").isJsonArray()) {
-            for (JsonElement member : currentGroup.getAsJsonArray("members")) {
-                if (member.isJsonObject() && member.getAsJsonObject().has("value")) {
-                    currentMemberIds.add(member.getAsJsonObject().get("value").getAsString());
-                }
-            }
-        }
-        List<String> added = userNames(attrs);
-        if (added != null) {
-            for (String username : added) {
-                JsonObject member = resolveMember(username);
-                String memberId = member.get("value").getAsString();
-                if (currentMemberIds.add(memberId)) {
-                    JsonArray one = new JsonArray();
-                    one.add(member);
-                    addOperation(operations, "add", "members", one);
-                }
-            }
-        }
-        List<String> removed = claimValues(attrs, IdentityProvisioningConstants.DELETED_USER_CLAIM_URI);
-        if (removed != null) {
-            for (String username : removed) {
-                String id = findUserIdByIdentifier(username);
-                if (id != null && currentMemberIds.remove(id)) {
-                    addOperation(operations, "remove", "members[value eq \"" + escapeFilter(id) + "\"]", null);
-                }
-            }
-        }
-        if (!operations.isEmpty()) {
-            JsonObject patch = patchDocument(operations);
-            request("PATCH", "/Groups/" + pathSegment(groupId), patch);
-        }
-    }
-
-    private void deleteGroup(ProvisioningEntity entity) throws IdentityProvisioningException {
-        List<String> names = groupNames(entity.getAttributes());
-        String groupName = CollectionUtils.isNotEmpty(names) ? names.get(0) : entity.getEntityName();
-        String id = findResourceId("Groups", "displayName", groupName);
-        if (id != null) {
-            request("DELETE", "/Groups/" + pathSegment(id), null);
-            invalidateResourceId("Groups", "displayName", groupName);
-        }
-    }
-
     private void updateUserGroupMemberships(ProvisioningEntity entity)
             throws IdentityProvisioningException {
         List<String> groups = groupNames(entity.getAttributes());
@@ -471,25 +369,6 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
         return user;
     }
 
-    private boolean patchChangesCurrent(JsonObject current, JsonArray operations) {
-        for (JsonElement item : operations) {
-            JsonObject operation = item.getAsJsonObject();
-            if (!"replace".equalsIgnoreCase(operation.has("op") ? operation.get("op").getAsString() : "")) return true;
-            String path = operation.has("path") ? operation.get("path").getAsString() : "";
-            JsonElement wanted = operation.get("value");
-            JsonElement actual = current;
-            for (String segment : path.split("\\.")) {
-                if (actual == null || !actual.isJsonObject() || !actual.getAsJsonObject().has(segment)) {
-                    actual = null;
-                    break;
-                }
-                actual = actual.getAsJsonObject().get(segment);
-            }
-            if (wanted == null || actual == null || !wanted.equals(actual)) return true;
-        }
-        return false;
-    }
-
     private JsonObject userPatch(Map<ClaimMapping, List<String>> attrs, boolean includeProfile)
             throws IdentityProvisioningException {
         JsonArray operations = new JsonArray();
@@ -553,18 +432,6 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
         operation.addProperty("path", path);
         if (value != null) operation.add("value", value);
         operations.add(operation);
-    }
-
-    private JsonObject resolveMember(String identifier) throws IdentityProvisioningException {
-        String id = findUserIdByIdentifier(identifier);
-        if (id == null) {
-            throw new IdentityProvisioningException("Cannot resolve group member in Stalwart: " + identifier);
-        }
-        JsonObject member = new JsonObject();
-        member.addProperty("value", id);
-        member.addProperty("display", identifier);
-        member.addProperty("type", "User");
-        return member;
     }
 
     private String findUserId(Map<ClaimMapping, List<String>> attrs, String fallback)
