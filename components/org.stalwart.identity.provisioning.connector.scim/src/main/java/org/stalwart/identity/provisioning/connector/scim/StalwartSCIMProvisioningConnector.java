@@ -41,6 +41,7 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.Semaphore;
 
 /**
  * WSO2 outbound provisioning connector that speaks SCIM 2.0 directly to Stalwart.
@@ -85,6 +86,8 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
     private String emailMembershipGroup = "Email";
     private boolean enableProfileUpdates = true;
     private String profileUpdateScimUrl;
+    private int maxConcurrentRequests = 8;
+    private transient Semaphore requestSemaphore = new Semaphore(8, true);
 
     @Override
     public void init(Property[] properties) throws IdentityProvisioningException {
@@ -107,6 +110,13 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
                     case StalwartSCIMProvisioningConnectorConstants.DISPLAY_NAME_CLAIM_URI -> displayNameClaimUri = value;
                     case StalwartSCIMProvisioningConnectorConstants.ENABLE_PROFILE_UPDATES -> enableProfileUpdates = Boolean.parseBoolean(value);
                     case StalwartSCIMProvisioningConnectorConstants.PROFILE_UPDATE_SCIM_URL -> profileUpdateScimUrl = trimTrailingSlash(value);
+                    case StalwartSCIMProvisioningConnectorConstants.MAX_CONCURRENT_REQUESTS -> {
+                        try {
+                            maxConcurrentRequests = Integer.parseInt(value);
+                        } catch (NumberFormatException e) {
+                            throw new IdentityProvisioningException("max-concurrent-requests must be an integer from 1 to 64.", e);
+                        }
+                    }
                     case StalwartSCIMProvisioningConnectorConstants.ACTIVE_CLAIM_URI -> activeClaimUri = value;
                     case StalwartSCIMProvisioningConnectorConstants.INVERT_ACTIVE_CLAIM ->
                             invertActiveClaim = Boolean.parseBoolean(value);
@@ -116,6 +126,10 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
                 }
             }
         }
+        if (maxConcurrentRequests < 1 || maxConcurrentRequests > 64) {
+            throw new IdentityProvisioningException("max-concurrent-requests must be between 1 and 64.");
+        }
+        requestSemaphore = new Semaphore(maxConcurrentRequests, true);
         if (StringUtils.isBlank(baseUrl) || StringUtils.isBlank(bearerToken)) {
             throw new IdentityProvisioningException("Stalwart SCIM base URL and bearer token are required.");
         }
@@ -666,7 +680,7 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
             }
             log.debug("Stalwart SCIM request; userId=" + resourceId + ", operation=" + method
                     + ", attempt=" + attempt + "/" + maxAttempts);
-            HttpResponse<String> response = HTTP_CLIENT.send(builder.build(), HttpResponse.BodyHandlers.ofString());
+            HttpResponse<String> response = sendWithLimit(builder.build());
             int status = response.statusCode();
             if (status == 404 && "DELETE".equals(method)) {
                 log.debug("Stalwart SCIM DELETE target already absent; treating as idempotent success.");
@@ -729,6 +743,15 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
         }
         }
         throw new IdentityProvisioningException("Stalwart SCIM request failed after retries.");
+    }
+
+    private HttpResponse<String> sendWithLimit(HttpRequest request) throws IOException, InterruptedException {
+        requestSemaphore.acquire();
+        try {
+            return HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofString());
+        } finally {
+            requestSemaphore.release();
+        }
     }
 
     private boolean isIdempotentPatch(JsonObject body) {
