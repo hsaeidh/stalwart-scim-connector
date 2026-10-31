@@ -65,7 +65,7 @@ For a WSO2 user creation event, the connector:
 3. Sends POST /Users with:
    - userName = the initial email address;
    - externalId = the stable WSO2 identifier;
-   - name.givenName and name.familyName when available;
+   - displayName from the configured displayName claim, or a composed name when both givenName and familyName are available;
    - active only when an active claim is configured.
 4. Does not send emails aliases.
 5. Reconciles the user's configured WSO2 group memberships after the account exists.
@@ -74,7 +74,7 @@ If an account with the same externalId already exists, the connector reuses it i
 
 ### 3.2 Change first name or last name
 
-For an update event, the connector looks up the existing Stalwart user by externalId and sends a PATCH containing the SCIM name object when both mapped name claims are present.
+For an update event, the connector looks up the existing Stalwart user by externalId. It prefers the configured displayName claim; otherwise it composes displayName from both givenName and familyName. If only one name part is present and displayName is absent, it fails safely rather than overwriting the full name.
 
 Example request body:
 
@@ -608,7 +608,7 @@ Connector ویژگی SCIM emails را ارسال نمی‌کند. در نتیج�
 - **حذف کاربر از گروه Email در WSO2:** Connector حساب Stalwart را پیدا می‌کند و active=false را با PATCH ارسال می‌کند.
 - **اثر در Stalwart:** بر اساس نگاشت SCIM در Stalwart، active=false مجوز Authenticate حساب را غیرفعال می‌کند؛ این کار حساب یا mailbox را حذف نمی‌کند.
 - **ترتیب اجرا:** این غیرفعال‌سازی بعد از به‌روزرسانی Claim فعال‌سازی انجام می‌شود. بنابراین اگر همان رویداد هم‌زمان active=true داشته باشد ولی کاربر از گروه Email حذف شده باشد، در پایان حساب غیرفعال می‌ماند.
-- **افزودن دوباره به گروه Email:** عضویت گروهی اضافه می‌شود، اما حسابی که قبلاً با active=false غیرفعال شده است خودکار فعال نمی‌شود. فعال‌سازی باید از طریق Claim فعال‌سازی پیکربندی‌شده یا اقدام مدیریتی انجام شود.
+- **افزودن دوباره به گروه Email:** Connector مقدار active=true را ارسال می‌کند و حساب Stalwart دوباره فعال می‌شود.
 - **حفظ mailbox:** غیرفعال‌سازی Authenticate به معنی حذف mailbox یا توقف قطعی دریافت ایمیل نیست. مجوزهای دریافت/ارسال و سیاست نگهداری باید جداگانه در Stalwart بررسی شوند.
 
 برای گروه‌های دیگر، افزودن و حذف عضویت از طریق PATCH منبع Group در Stalwart انجام می‌شود. گروه متناظر باید در Stalwart وجود داشته باشد.
@@ -627,7 +627,9 @@ Connector ویژگی SCIM emails را ارسال نمی‌کند. در نتیج�
 
 ### تغییر گروه
 
-در رویداد Update گروه:
+در نسخه 2.0.1 رویدادهای مستقل GROUP در WSO2 عمداً نادیده گرفته می‌شوند؛ بنابراین گروه‌های توزیع باید از قبل در Stalwart ساخته شده باشند. تغییر عضویت کاربران فقط از Claimهای NEW_GROUP_CLAIM_URI و DELETED_GROUP_CLAIM_URI در رویداد USER اعمال می‌شود.
+
+رویدادهای Update گروه:
 
 - گروه با نام قبلی (در صورت ارسال Claim نام قبلی) پیدا می‌شود.
 - اگر نام عوض شده باشد، displayName به‌روزرسانی می‌شود.
@@ -685,12 +687,12 @@ Connector برای کاهش اثر رویدادهای تکراری و خطاها
 6. شماره تلفن، آدرس، عکس، زبان، منطقه زمانی یا سایر پروفایل‌های غیر از فیلدهای توضیح‌داده‌شده را همگام نمی‌کند.
 7. Claimهای OIDC، تنظیمات Bulwark یا نحوه ورود JMAP را تغییر نمی‌دهد.
 8. حذف کاربر را به تعلیق امن و حفظ mailbox تبدیل نمی‌کند.
-9. با اضافه شدن کاربر به گروه Email، حسابی را که قبلاً غیرفعال شده خودکار فعال نمی‌کند.
+9. با اضافه شدن کاربر به گروه Email، حساب Stalwart را در صورت نیاز ایجاد و با active=true فعال می‌کند.
 10. اگر یکی از دو Claim نام یا نام خانوادگی در رویداد Update نباشد، نام ناقص را جایگزین نام کامل نمی‌کند.
 
 ## ۱۳. تنظیمات اتصال در WSO2
 
-Connector یازده Property دارد:
+Connector پانزده Property دارد:
 
 | Property | مقدار پیشنهادی برای این سناریو | توضیح |
 |---|---|---|
