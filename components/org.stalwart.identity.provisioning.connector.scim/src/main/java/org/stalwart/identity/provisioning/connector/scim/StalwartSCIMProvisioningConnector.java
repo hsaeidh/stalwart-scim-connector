@@ -65,7 +65,6 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
     private String givenNameClaimUri = "http://wso2.org/claims/givenname";
     private String familyNameClaimUri = "http://wso2.org/claims/lastname";
     private String activeClaimUri = "";
-    private String emailAliasesClaimUri = "";
     private boolean invertActiveClaim = false;
     private String emailMembershipGroup = "Email";
 
@@ -88,7 +87,6 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
                     case StalwartSCIMProvisioningConnectorConstants.GIVEN_NAME_CLAIM_URI -> givenNameClaimUri = value;
                     case StalwartSCIMProvisioningConnectorConstants.FAMILY_NAME_CLAIM_URI -> familyNameClaimUri = value;
                     case StalwartSCIMProvisioningConnectorConstants.ACTIVE_CLAIM_URI -> activeClaimUri = value;
-                    case StalwartSCIMProvisioningConnectorConstants.EMAIL_ALIASES_CLAIM_URI -> emailAliasesClaimUri = value;
                     case StalwartSCIMProvisioningConnectorConstants.INVERT_ACTIVE_CLAIM ->
                             invertActiveClaim = Boolean.parseBoolean(value);
                     case StalwartSCIMProvisioningConnectorConstants.EMAIL_MEMBERSHIP_GROUP ->
@@ -175,7 +173,7 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
         if (CollectionUtils.isNotEmpty(newGroups) || CollectionUtils.isNotEmpty(deletedGroups)) {
             if (newGroups != null) {
                 for (String group : newGroups) {
-                    updateGroupMembership(group, targetUserName(attrs, entity.getEntityName()), true);
+                    updateGroupMembership(group, targetUserIdentifier(attrs, entity.getEntityName()), true);
                 }
             }
             if (deletedGroups != null) {
@@ -191,22 +189,17 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
             }
         }
         JsonObject patch = userPatch(attrs);
-        List<String> aliases = claimValues(attrs, emailAliasesClaimUri);
-        boolean reconcileAliases = StringUtils.isNotBlank(emailAliasesClaimUri) && aliases != null;
-        if (patch.getAsJsonArray("Operations").size() > 0 || reconcileAliases) {
+        if (patch.getAsJsonArray("Operations").size() > 0) {
             String id = findUserId(attrs, entity.getEntityName());
             if (id != null) {
                 JsonObject current = request("GET", "/Users/" + pathSegment(id), null);
-                if (reconcileAliases) reconcileEmailAliases(current, aliases, targetUserName(attrs, entity.getEntityName()),
-                        patch.getAsJsonArray("Operations"));
                 if (patchChangesCurrent(current, patch.getAsJsonArray("Operations"))) {
                     request("PATCH", "/Users/" + pathSegment(id), patch);
                 } else {
                     log.debug("Skipping unchanged user PATCH; userId=" + id + ", operation=UPDATE");
                 }
             } else {
-                throw new IdentityProvisioningException("Stalwart user was not found for update: "
-                        + targetUserName(attrs, entity.getEntityName()));
+                throw new IdentityProvisioningException("Stalwart user was not found for update; stable externalId lookup failed.");
             }
         }
         // Apply the group-based revocation last so an independently mapped
@@ -355,9 +348,9 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
             throws IdentityProvisioningException {
         List<String> groups = groupNames(entity.getAttributes());
         if (groups != null) {
-            String username = targetUserName(entity.getAttributes(), entity.getEntityName());
+            String identifier = targetUserIdentifier(entity.getAttributes(), entity.getEntityName());
             for (String group : groups) {
-                updateGroupMembership(group, username, true);
+                updateGroupMembership(group, identifier, true);
             }
         }
     }
@@ -426,20 +419,7 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
         if (!name.isEmpty()) {
             user.add("name", name);
         }
-        // Stalwart derives the immutable primary email from userName; only add aliases here.
-        List<String> aliases = claimValues(attrs, emailAliasesClaimUri);
-        if (aliases != null) {
-            JsonArray emails = new JsonArray();
-            for (String alias : aliases) {
-                if (StringUtils.isNotBlank(alias) && !userName.equalsIgnoreCase(alias.trim())) {
-                    JsonObject email = new JsonObject();
-                    email.addProperty("value", alias.trim());
-                    email.addProperty("type", "work");
-                    emails.add(email);
-                }
-            }
-            if (!emails.isEmpty()) user.add("emails", emails);
-        }
+        // Email aliases are intentionally not provisioned. The primary address is immutable after creation.
         String active = mappedValue(attrs, activeClaimUri);
         if (StringUtils.isNotBlank(active)) {
             boolean activeValue = parseBooleanClaim(active, activeClaimUri);
@@ -448,45 +428,24 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
         return user;
     }
 
-    private void reconcileEmailAliases(JsonObject current, List<String> desiredAliases, String primary,
-                                       JsonArray operations) {
-        java.util.Set<String> desired = new java.util.LinkedHashSet<>();
-        for (String alias : desiredAliases) {
-            if (StringUtils.isNotBlank(alias) && !alias.trim().equalsIgnoreCase(primary)) {
-                desired.add(alias.trim().toLowerCase(java.util.Locale.ROOT));
-            }
-        }
-        java.util.Set<String> existing = new java.util.LinkedHashSet<>();
-        if (current.has("emails") && current.get("emails").isJsonArray()) {
-            for (JsonElement item : current.getAsJsonArray("emails")) {
-                if (!item.isJsonObject() || !item.getAsJsonObject().has("value")) continue;
-                JsonObject email = item.getAsJsonObject();
-                String value = email.get("value").getAsString();
-                boolean primaryEntry = (email.has("primary") && email.get("primary").getAsBoolean())
-                        || value.equalsIgnoreCase(primary);
-                if (!primaryEntry) existing.add(value.toLowerCase(java.util.Locale.ROOT));
-            }
-        }
-        for (String alias : existing) {
-            if (!desired.contains(alias)) addOperation(operations, "remove",
-                    "emails[value eq \"" + escapeFilter(alias) + "\"]", null);
-        }
-        for (String alias : desired) {
-            if (!existing.contains(alias)) {
-                JsonObject email = new JsonObject();
-                email.addProperty("value", alias);
-                email.addProperty("type", "work");
-                addOperation(operations, "add", "emails", email);
-            }
-        }
-    }
-
     private boolean patchChangesCurrent(JsonObject current, JsonArray operations) {
         for (JsonElement item : operations) {
             JsonObject operation = item.getAsJsonObject();
             if (!"replace".equalsIgnoreCase(operation.has("op") ? operation.get("op").getAsString() : "")) return true;
             String path = operation.has("path") ? operation.get("path").getAsString() : "";
             JsonElement wanted = operation.get("value");
+            if ("name".equals(path) && wanted != null && wanted.isJsonObject()) {
+                JsonObject name = wanted.getAsJsonObject();
+                String given = name.has("givenName") ? name.get("givenName").getAsString() : "";
+                String family = name.has("familyName") ? name.get("familyName").getAsString() : "";
+                String desiredDisplayName = joinName(given, family);
+                String currentDisplayName = current.has("displayName") ? current.get("displayName").getAsString()
+                        : current.has("name") && current.get("name").isJsonObject()
+                        && current.getAsJsonObject("name").has("formatted")
+                        ? current.getAsJsonObject("name").get("formatted").getAsString() : null;
+                if (desiredDisplayName.equals(currentDisplayName)) continue;
+                return true;
+            }
             JsonElement actual = current;
             for (String segment : path.split("\\.")) {
                 if (actual == null || !actual.isJsonObject() || !actual.getAsJsonObject().has(segment)) {
@@ -503,20 +462,43 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
     private JsonObject userPatch(Map<ClaimMapping, List<String>> attrs)
             throws IdentityProvisioningException {
         JsonArray operations = new JsonArray();
-        String userName = mappedValue(attrs, userNameClaimUri);
-        if (StringUtils.isNotBlank(userName)) addReplace(operations, "userName", userName);
-        String externalId = mappedValue(attrs, externalIdClaimUri);
-        if (StringUtils.isNotBlank(externalId)) addReplace(operations, "externalId", externalId);
+
+        // userName and externalId are identity keys, not mutable profile fields.
+        // Never PATCH either one: changing userName changes the primary SMTP address.
         String given = mappedValue(attrs, givenNameClaimUri);
-        if (StringUtils.isNotBlank(given)) addReplace(operations, "name.givenName", given);
         String family = mappedValue(attrs, familyNameClaimUri);
-        if (StringUtils.isNotBlank(family)) addReplace(operations, "name.familyName", family);
+        if (StringUtils.isNotBlank(given) && StringUtils.isNotBlank(family)) {
+            JsonObject name = new JsonObject();
+            name.addProperty("givenName", given.trim());
+            name.addProperty("familyName", family.trim());
+            addReplace(operations, "name", name);
+        } else if (StringUtils.isNotBlank(given) || StringUtils.isNotBlank(family)) {
+            // Stalwart stores a single display name, not independent name parts.
+            // Avoid replacing a complete display name with a partial value when WSO2
+            // sends only one of the two configured claims in an update event.
+            log.warn("Skipping Stalwart name update because the provisioning event did not contain both "
+                    + "given-name and family-name claims. Ensure both mapped claims are included in WSO2 updates.");
+        }
+
         String active = mappedValue(attrs, activeClaimUri);
         if (StringUtils.isNotBlank(active)) {
             boolean activeValue = parseBooleanClaim(active, activeClaimUri);
             addReplace(operations, "active", invertActiveClaim ? !activeValue : activeValue);
         }
         return patchDocument(operations);
+    }
+
+    private String targetUserIdentifier(Map<ClaimMapping, List<String>> attrs, String fallback) {
+        String externalId = mappedValue(attrs, externalIdClaimUri);
+        return StringUtils.isNotBlank(externalId) ? externalId : fallback;
+    }
+
+    private static String joinName(String given, String family) {
+        String first = StringUtils.defaultString(given).trim();
+        String last = StringUtils.defaultString(family).trim();
+        if (first.isEmpty()) return last;
+        if (last.isEmpty()) return first;
+        return first + " " + last;
     }
 
     private JsonObject patchDocument(JsonArray operations) {
@@ -530,6 +512,10 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
 
     private void addReplace(JsonArray operations, String path, String value) {
         addOperation(operations, "replace", path, new com.google.gson.JsonPrimitive(value));
+    }
+
+    private void addReplace(JsonArray operations, String path, JsonElement value) {
+        addOperation(operations, "replace", path, value);
     }
 
     private void addReplace(JsonArray operations, String path, boolean value) {
