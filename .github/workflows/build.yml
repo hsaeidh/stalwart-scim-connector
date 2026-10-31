@@ -190,7 +190,7 @@ jobs:
           print("Verified immutable userName/externalId and disabled alias synchronization.")
           PY
       - name: Upload connector JAR
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: stalwart-scim-connector-2.0.1
           path: components/org.stalwart.identity.provisioning.connector.scim/target/*.jar
