@@ -1,7 +1,7 @@
 name: Build Stalwart SCIM Connector
 on:
   push:
-    branches: [ "main", "release/1.0.8", "release/1.0.9", "release/2.0.0" ]
+    branches: [ "main", "release/1.0.8", "release/1.0.9", "release/2.0.1" ]
   pull_request:
   workflow_dispatch:
 permissions:
@@ -59,7 +59,7 @@ jobs:
           imports = attributes.get("Import-Package", "")
           service_component = attributes.get("Service-Component", "")
           require_capability = attributes.get("Require-Capability", "")
-          assert version == "2.0.0", f"Unexpected Bundle-Version: {version!r}"
+          assert version == "2.0.1", f"Unexpected Bundle-Version: {version!r}"
           assert attributes.get("Bundle-SymbolicName", "").split(";")[0] == (
               "org.stalwart.identity.provisioning.connector.scim"
           ), "Unexpected Bundle-SymbolicName"
@@ -70,7 +70,7 @@ jobs:
               f"Unexpected Bundle-StartLevel: {attributes.get('Bundle-StartLevel')!r}"
           )
 
-          expected_extender = 'osgi.extender;filter:="(&(osgi.extender=osgi.component)(version>=1.3.0)(!(version>=2.0.0)))"'
+          expected_extender = 'osgi.extender;filter:="(&(osgi.extender=osgi.component)(version>=1.3.0)(!(version>=2.0.1)))"'
           expected_ee = 'osgi.ee;filter:="(&(osgi.ee=JavaSE)(version>=21))"'
           assert require_capability.count("osgi.extender;filter") == 1, (
               "Expected exactly one SCR extender requirement: " + require_capability
@@ -117,12 +117,12 @@ jobs:
           assert root.attrib.get("deactivate") == "deactivate", "Missing deactivate method"
 
           for marker in (
-              "STALWART-SCIM STATIC INIT ENTERING v2.0.0",
-              "STALWART-SCIM STATIC INIT DONE v2.0.0",
-              "STALWART-SCIM CONSTRUCTOR v2.0.0",
-              "STALWART-SCIM ACTIVATE START v2.0.0",
-              "STALWART-SCIM ACTIVATE END v2.0.0",
-              "STALWART-SCIM ACTIVATE FAILED v2.0.0",
+              "STALWART-SCIM STATIC INIT ENTERING v2.0.1",
+              "STALWART-SCIM STATIC INIT DONE v2.0.1",
+              "STALWART-SCIM CONSTRUCTOR v2.0.1",
+              "STALWART-SCIM ACTIVATE START v2.0.1",
+              "STALWART-SCIM ACTIVATE END v2.0.1",
+              "STALWART-SCIM ACTIVATE FAILED v2.0.1",
           ):
               assert marker.encode() in class_data, f"Missing bytecode diagnostic marker: {marker}"
 
@@ -142,7 +142,7 @@ jobs:
           print("Verified exactly one SCR extender requirement and JavaSE >=21.")
           print("Verified Bundle-StartLevel=1 and Bundle-ActivationPolicy=lazy.")
           print("Verified WSO2 Import-Package ranges and no embedded WSO2 classes.")
-          print("Verified v2.0.0 static-init, constructor and activation diagnostic markers.")
+          print("Verified v2.0.1 static-init, constructor and activation diagnostic markers.")
           source_path = (
               "components/org.stalwart.identity.provisioning.connector.scim/src/main/java/"
               "org/stalwart/identity/provisioning/connector/scim/StalwartSCIMProvisioningConnector.java"
@@ -155,8 +155,29 @@ jobs:
           assert 'addReplace(operations, "externalId"' not in source, (
               "externalId must remain immutable after account creation"
           )
-          assert 'addReplace(operations, "name", name)' in source, (
-              "Expected structured-name PATCH support"
+          assert 'addReplace(operations, "displayName"' in source, (
+              "Expected Stalwart displayName PATCH support"
+          )
+          assert "joinName(given, family)" in source, (
+              "Expected structured name parts to be composed into Stalwart displayName"
+          )
+          assert 'if (!isEmailMembershipGroup(group))' in source, (
+              "Email entitlement must not be provisioned as a Stalwart Group"
+          )
+          assert 'excludedAttributes=members' in source, (
+              "Group ID lookups must omit large members arrays"
+          )
+          assert 'request("GET", "/Groups/"' not in source, (
+              "Membership processing must not fetch full Group resources"
+          )
+          assert 'RESOURCE_ID_CACHE' in source and 'CACHE_TTL_MILLIS' in source, (
+              "Expected endpoint-scoped TTL resource ID cache"
+          )
+          assert 'Semaphore' in source and 'sendWithLimit' in source, (
+              "Expected bounded concurrent SCIM HTTP requests"
+          )
+          assert 'requestAt(profileUpdateBaseUrl()' in source, (
+              "Expected a separate configurable profile-update SCIM endpoint"
           )
           assert "targetUserIdentifier(attrs" in source, (
               "Group membership updates must resolve users through the stable identifier"
@@ -171,7 +192,7 @@ jobs:
       - name: Upload connector JAR
         uses: actions/upload-artifact@v4
         with:
-          name: stalwart-scim-connector-2.0.0
+          name: stalwart-scim-connector-2.0.1
           path: components/org.stalwart.identity.provisioning.connector.scim/target/*.jar
           if-no-files-found: error
           retention-days: 30

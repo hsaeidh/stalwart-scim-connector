@@ -26,7 +26,7 @@ public final class StalwartSCIMFactorySmokeTest {
         }
 
         List<Property> properties = factory.getConfigurationProperties();
-        if (properties == null || properties.size() != 11) {
+        if (properties == null || properties.size() != 15) {
             throw new IllegalStateException("Expected 11 configuration properties, got: "
                     + (properties == null ? "null" : properties.size()));
         }
@@ -50,6 +50,10 @@ public final class StalwartSCIMFactorySmokeTest {
                 StalwartSCIMProvisioningConnectorConstants.EXTERNAL_ID_CLAIM_URI,
                 StalwartSCIMProvisioningConnectorConstants.GIVEN_NAME_CLAIM_URI,
                 StalwartSCIMProvisioningConnectorConstants.FAMILY_NAME_CLAIM_URI,
+                StalwartSCIMProvisioningConnectorConstants.DISPLAY_NAME_CLAIM_URI,
+                StalwartSCIMProvisioningConnectorConstants.ENABLE_PROFILE_UPDATES,
+                StalwartSCIMProvisioningConnectorConstants.PROFILE_UPDATE_SCIM_URL,
+                StalwartSCIMProvisioningConnectorConstants.MAX_CONCURRENT_REQUESTS,
                 StalwartSCIMProvisioningConnectorConstants.ACTIVE_CLAIM_URI,
                 StalwartSCIMProvisioningConnectorConstants.INVERT_ACTIVE_CLAIM,
                 StalwartSCIMProvisioningConnectorConstants.EMAIL_MEMBERSHIP_GROUP
@@ -71,13 +75,18 @@ public final class StalwartSCIMFactorySmokeTest {
                 "http://wso2.org/claims/givenname");
         assertDefault(byName, StalwartSCIMProvisioningConnectorConstants.FAMILY_NAME_CLAIM_URI,
                 "http://wso2.org/claims/lastname");
+        assertDefault(byName, StalwartSCIMProvisioningConnectorConstants.DISPLAY_NAME_CLAIM_URI,
+                "http://wso2.org/claims/displayname");
+        assertDefault(byName, StalwartSCIMProvisioningConnectorConstants.ENABLE_PROFILE_UPDATES, "true");
+        assertDefault(byName, StalwartSCIMProvisioningConnectorConstants.PROFILE_UPDATE_SCIM_URL, "");
+        assertDefault(byName, StalwartSCIMProvisioningConnectorConstants.MAX_CONCURRENT_REQUESTS, "8");
         assertDefault(byName, StalwartSCIMProvisioningConnectorConstants.INVERT_ACTIVE_CLAIM, "false");
         assertDefault(byName, StalwartSCIMProvisioningConnectorConstants.EMAIL_MEMBERSHIP_GROUP, "Email");
 
         System.out.println("Connector type: " + factory.getConnectorType());
         System.out.println("Properties count: " + properties.size());
         System.out.println("Required claim mapping defaults: emailaddress -> userName, username -> externalId");
-        System.out.println("SMOKE TEST PASSED v2.0.0");
+        System.out.println("SMOKE TEST PASSED v2.0.1");
     }
 
     private static void assertDefault(Map<String, Property> properties, String name, String expected) {
