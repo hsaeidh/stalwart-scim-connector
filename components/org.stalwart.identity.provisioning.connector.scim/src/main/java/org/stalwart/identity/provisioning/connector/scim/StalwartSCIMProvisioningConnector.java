@@ -87,6 +87,7 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
                     case StalwartSCIMProvisioningConnectorConstants.EXTERNAL_ID_CLAIM_URI -> externalIdClaimUri = value;
                     case StalwartSCIMProvisioningConnectorConstants.GIVEN_NAME_CLAIM_URI -> givenNameClaimUri = value;
                     case StalwartSCIMProvisioningConnectorConstants.FAMILY_NAME_CLAIM_URI -> familyNameClaimUri = value;
+                    case StalwartSCIMProvisioningConnectorConstants.DISPLAY_NAME_CLAIM_URI -> displayNameClaimUri = value;
                     case StalwartSCIMProvisioningConnectorConstants.ACTIVE_CLAIM_URI -> activeClaimUri = value;
                     case StalwartSCIMProvisioningConnectorConstants.INVERT_ACTIVE_CLAIM ->
                             invertActiveClaim = Boolean.parseBoolean(value);
