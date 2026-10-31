@@ -180,9 +180,12 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
             }
             if (deletedGroups != null) {
                 for (String group : deletedGroups) {
-                    updateGroupMembership(group, targetUserName(attrs, entity.getEntityName()), false);
                     if (isEmailMembershipGroup(group)) {
+                        // Email access revocation is enforced through SCIM User.active.
+                        // Do not make it depend on a corresponding Stalwart Group resource.
                         emailMembershipRemoved = true;
+                    } else {
+                        updateGroupMembership(group, targetUserName(attrs, entity.getEntityName()), false);
                     }
                 }
             }
