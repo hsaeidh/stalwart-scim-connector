@@ -61,14 +61,16 @@ public class StalwartSCIMProvisioningConnectorFactory extends AbstractProvisioni
             properties.add(profileUpdates);
             properties.add(property(StalwartSCIMProvisioningConnectorConstants.PROFILE_UPDATE_SCIM_URL,
                     "Profile Update SCIM URL (optional; defaults to Base URL)", "", false, false, 11));
+            properties.add(property(StalwartSCIMProvisioningConnectorConstants.MAX_CONCURRENT_REQUESTS,
+                    "Maximum Concurrent SCIM Requests (1-64)", "8", false, false, 12));
             properties.add(property(StalwartSCIMProvisioningConnectorConstants.ACTIVE_CLAIM_URI,
-                    "active source WSO2 local Boolean claim URI (optional)", "", false, false, 12));
+                    "active source WSO2 local Boolean claim URI (optional)", "", false, false, 13));
             Property invertActive = property(StalwartSCIMProvisioningConnectorConstants.INVERT_ACTIVE_CLAIM,
-                    "Invert active source value (for accountDisabled)", "false", false, false, 13);
+                    "Invert active source value (for accountDisabled)", "false", false, false, 14);
             invertActive.setType("boolean");
             properties.add(invertActive);
             properties.add(property(StalwartSCIMProvisioningConnectorConstants.EMAIL_MEMBERSHIP_GROUP,
-                    "WSO2 group that grants email access", "Email", false, false, 14));
+                    "WSO2 group that grants email access", "Email", false, false, 15));
 
             System.out.println(">>> STALWART-SCIM getConfigurationProperties() returned "
                     + properties.size() + " properties");
