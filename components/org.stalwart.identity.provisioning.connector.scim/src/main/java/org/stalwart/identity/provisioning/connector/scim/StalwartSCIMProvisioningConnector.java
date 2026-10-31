@@ -171,6 +171,7 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
         Map<ClaimMapping, List<String>> attrs = entity.getAttributes();
         List<String> newGroups = claimValues(attrs, IdentityProvisioningConstants.NEW_GROUP_CLAIM_URI);
         List<String> deletedGroups = claimValues(attrs, IdentityProvisioningConstants.DELETED_GROUP_CLAIM_URI);
+        boolean emailMembershipRemoved = false;
         if (CollectionUtils.isNotEmpty(newGroups) || CollectionUtils.isNotEmpty(deletedGroups)) {
             if (newGroups != null) {
                 for (String group : newGroups) {
@@ -181,7 +182,7 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
                 for (String group : deletedGroups) {
                     updateGroupMembership(group, targetUserName(attrs, entity.getEntityName()), false);
                     if (isEmailMembershipGroup(group)) {
-                        disableStalwartAuthentication(attrs, entity.getEntityName());
+                        emailMembershipRemoved = true;
                     }
                 }
             }
@@ -204,6 +205,11 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
                 throw new IdentityProvisioningException("Stalwart user was not found for update: "
                         + targetUserName(attrs, entity.getEntityName()));
             }
+        }
+        // Apply the group-based revocation last so an independently mapped
+        // active claim in the same WSO2 event cannot re-enable the account.
+        if (emailMembershipRemoved) {
+            disableStalwartAuthentication(attrs, entity.getEntityName());
         }
     }
 
