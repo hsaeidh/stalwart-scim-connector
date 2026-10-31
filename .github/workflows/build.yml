@@ -155,14 +155,11 @@ jobs:
           assert 'addReplace(operations, "externalId"' not in source, (
               "externalId must remain immutable after account creation"
           )
-          assert 'addReplace(operations, "name.givenName"' in source, (
-              "Expected independent givenName PATCH support"
-          )
-          assert 'addReplace(operations, "name.familyName"' in source, (
-              "Expected independent familyName PATCH support"
-          )
           assert 'addReplace(operations, "displayName"' in source, (
-              "Expected independent displayName PATCH support"
+              "Expected Stalwart displayName PATCH support"
+          )
+          assert "joinName(given, family)" in source, (
+              "Expected structured name parts to be composed into Stalwart displayName"
           )
           assert 'if (!isEmailMembershipGroup(group))' in source, (
               "Email entitlement must not be provisioned as a Stalwart Group"
