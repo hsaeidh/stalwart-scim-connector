@@ -217,7 +217,15 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
     private void createUser(ProvisioningEntity entity) throws IdentityProvisioningException {
         Map<ClaimMapping, List<String>> attrs = entity.getAttributes();
         String userName = targetUserName(attrs, entity.getEntityName());
+        List<String> initialGroups = groupNames(attrs);
+        boolean emailEntitled = initialGroups != null
+                && initialGroups.stream().anyMatch(this::isEmailMembershipGroup);
         JsonObject user = userPayload(attrs, userName);
+        // Email entitlement takes precedence over a mapped active claim. Fold it
+        // into the create document instead of issuing a redundant follow-up PATCH.
+        if (emailEntitled) {
+            user.addProperty("active", true);
+        }
         // WSO2 can retry a failed provisioning event. Reuse an existing account so
         // a later group-membership failure does not cause a duplicate-user conflict.
         String existingId = findUserId(attrs, entity.getEntityName());
@@ -225,20 +233,22 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
             request("POST", "/Users", user);
         } else {
             log.info("Stalwart user already exists; reconciling attributes and memberships: " + userName);
-            updateUser(entity);
+            updateUser(entity, emailEntitled);
         }
         updateUserGroupMemberships(entity);
-        List<String> initialGroups = groupNames(attrs);
-        if (initialGroups != null && initialGroups.stream().anyMatch(this::isEmailMembershipGroup)) {
-            setStalwartActive(attrs, entity.getEntityName(), true);
-        }
     }
 
     private void updateUser(ProvisioningEntity entity) throws IdentityProvisioningException {
+        updateUser(entity, false);
+    }
+
+    private void updateUser(ProvisioningEntity entity, boolean forceEmailEntitlement)
+            throws IdentityProvisioningException {
         Map<ClaimMapping, List<String>> attrs = entity.getAttributes();
-        List<String> newGroups = claimValues(attrs, IdentityProvisioningConstants.NEW_GROUP_CLAIM_URI);
-        List<String> deletedGroups = claimValues(attrs, IdentityProvisioningConstants.DELETED_GROUP_CLAIM_URI);
-        boolean emailMembershipRemoved = false;
+        List<String> newGroups = distinctGroupNames(
+                claimValues(attrs, IdentityProvisioningConstants.NEW_GROUP_CLAIM_URI));
+        List<String> deletedGroups = distinctGroupNames(
+                claimValues(attrs, IdentityProvisioningConstants.DELETED_GROUP_CLAIM_URI));        boolean emailMembershipRemoved = false;
         boolean emailMembershipAdded = newGroups != null
                 && newGroups.stream().anyMatch(this::isEmailMembershipGroup);
         if (emailMembershipAdded && findUserId(attrs, entity.getEntityName()) == null) {
@@ -278,15 +288,21 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
                 throw new IdentityProvisioningException("Stalwart user was not found for update; stable externalId lookup failed.");
             }
         }
+        // Compute one effective active value. Email entitlement has precedence
+        // over the independently mapped active claim, and exactly one PATCH is sent.
         String activeClaim = mappedValue(attrs, activeClaimUri);
+        Boolean desiredActive = null;
         if (StringUtils.isNotBlank(activeClaim)) {
             boolean activeValue = parseBooleanClaim(activeClaim, activeClaimUri);
-            setStalwartActive(attrs, entity.getEntityName(), invertActiveClaim ? !activeValue : activeValue);
+            desiredActive = invertActiveClaim ? !activeValue : activeValue;
         }
-        // Email-group entitlement has precedence over an independently mapped active claim.
-        if (emailMembershipRemoved || emailMembershipAdded) {
-            // Group entitlement takes precedence over a simultaneous active claim.
-            setStalwartActive(attrs, entity.getEntityName(), !emailMembershipRemoved);
+        if (forceEmailEntitlement) {
+            desiredActive = true;
+        } else if (emailMembershipRemoved || emailMembershipAdded) {
+            desiredActive = !emailMembershipRemoved;
+        }
+        if (desiredActive != null) {
+            setStalwartActive(attrs, entity.getEntityName(), desiredActive);
         }
     }
 
@@ -477,8 +493,7 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
         }
         if (id != null) return id;
         // Email identifiers can legitimately be supplied by legacy group claims;
-        // numeric/stable identifiers are externalId and need no username fallback.
-        if (candidate.indexOf('@') >= 0) {
+        // numeric/stable identifiers are externalId and need no username fallback.        if (candidate.indexOf('@') >= 0) {
             id = findResourceId("Users", "userName", candidate);
             return id != null ? id : (candidate.equals(identifier) ? null
                     : findResourceId("Users", "userName", identifier));
@@ -717,8 +732,7 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
                     retryBackoff(attempt, response.headers().firstValue("Retry-After").orElse(null));
                     continue;
                 }
-            }
-            if (status < 200 || status >= 300) {
+            }            if (status < 200 || status >= 300) {
                 throw new IdentityProvisioningException("Stalwart SCIM " + method + " request failed with HTTP "
                         + status + ": " + abbreviate(response.body()));
             }
@@ -867,13 +881,24 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
     }
 
     private List<String> groupNames(Map<ClaimMapping, List<String>> attrs) {
-        List<String> names = claimValues(attrs, IdentityProvisioningConstants.GROUP_CLAIM_URI);
-        if (names != null) {
-            List<String> normalized = new ArrayList<>();
-            for (String name : names) normalized.add(stripUserStoreDomain(name));
-            return normalized;
+        return distinctGroupNames(claimValues(attrs, IdentityProvisioningConstants.GROUP_CLAIM_URI));
+    }
+
+    /**
+     * Normalize user-store-qualified group names and remove exact duplicates
+     * while preserving source order. Duplicate WSO2 claims must not create
+     * duplicate SCIM membership PATCH operations.
+     */
+    private List<String> distinctGroupNames(List<String> names) {
+        if (names == null) return null;
+        java.util.LinkedHashSet<String> unique = new java.util.LinkedHashSet<>();
+        for (String name : names) {
+            if (StringUtils.isNotBlank(name)) {
+                String normalized = stripUserStoreDomain(name.trim());
+                if (StringUtils.isNotBlank(normalized)) unique.add(normalized);
+            }
         }
-        return null;
+        return new ArrayList<>(unique);
     }
 
     private String valueOf(Property property) {
