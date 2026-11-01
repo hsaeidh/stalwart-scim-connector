@@ -89,7 +89,7 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
     private int bulkFailOnErrors = 0;
     private int bulkRequestTimeoutMs = 30000;
     private int bulkMaxPayloadBytes = 900000;
-    private volatile boolean bulkEndpointUnsupported = false;
+    private final ConcurrentMap<String, Boolean> bulkUnsupportedEndpoints = new ConcurrentHashMap<>();
 
     @Override
     public void init(Property[] properties) throws IdentityProvisioningException {
@@ -559,7 +559,7 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
 
     private JsonObject requestAt(String endpointBaseUrl, String method, String path, JsonObject body)
             throws IdentityProvisioningException {
-        if ("BULK".equals(provisioningMode) && !bulkEndpointUnsupported
+        if ("BULK".equals(provisioningMode) && !bulkUnsupportedEndpoints.containsKey(endpointBaseUrl)
                 && !"GET".equalsIgnoreCase(method)) {
             return requestBulkAt(endpointBaseUrl, method, path, body);
         }
@@ -607,7 +607,7 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
             if ((httpStatus == 404 || httpStatus == 405 || httpStatus == 501) && bulkFallbackToIndividual) {
                 // These statuses indicate that the Bulk endpoint is unavailable.
                 // Only this definitive response permits safe fallback.
-                bulkEndpointUnsupported = true;
+                bulkUnsupportedEndpoints.put(endpointBaseUrl, Boolean.TRUE);
                 log.warn("Stalwart SCIM Bulk endpoint is unavailable (HTTP " + httpStatus
                         + "); switching this connector instance to Individual mode.");
                 return requestAtIndividual(endpointBaseUrl, method, path, data);
