@@ -71,6 +71,23 @@ public class StalwartSCIMProvisioningConnectorFactory extends AbstractProvisioni
             properties.add(invertActive);
             properties.add(property(StalwartSCIMProvisioningConnectorConstants.EMAIL_MEMBERSHIP_GROUP,
                     "WSO2 group that grants email access", "Email", false, false, 15));
+            Property mode = property(StalwartSCIMProvisioningConnectorConstants.PROVISIONING_MODE,
+                    "Provisioning Mode (INDIVIDUAL or BULK)", "INDIVIDUAL", false, false, 16);
+            mode.setDescription("INDIVIDUAL رفتار فعلی کانکتور است. BULK هر عملیات تغییردهنده را به‌صورت هم‌زمان از endpoint استاندارد SCIM Bulk ارسال می‌کند.");
+            properties.add(mode);
+            Property fallback = property(StalwartSCIMProvisioningConnectorConstants.BULK_FALLBACK_TO_INDIVIDUAL,
+                    "Fallback to Individual if Bulk endpoint is unavailable", "true", false, false, 17);
+            fallback.setType("boolean");
+            fallback.setDescription("اگر سرور صریحاً اعلام کند endpoint مربوط به Bulk وجود ندارد، کانکتور به درخواست مستقل برمی‌گردد؛ خطاهای مبهم باعث ارسال مجدد نمی‌شوند.");
+            properties.add(fallback);
+            Property bulkTimeout = property(StalwartSCIMProvisioningConnectorConstants.BULK_REQUEST_TIMEOUT_MS,
+                    "Bulk request timeout (1000-120000 ms)", "30000", false, false, 18);
+            bulkTimeout.setDescription("مهلت انتظار پاسخ سرور برای هر درخواست Bulk به میلی‌ثانیه.");
+            properties.add(bulkTimeout);
+            Property bulkPayload = property(StalwartSCIMProvisioningConnectorConstants.BULK_MAX_PAYLOAD_BYTES,
+                    "Bulk maximum payload size (1024-1048576 bytes)", "900000", false, false, 19);
+            bulkPayload.setDescription("حداکثر اندازه بدنه درخواست Bulk؛ مقدار پیش‌فرض با فاصله امن کمتر از محدودیت یک مگابایتی Stalwart تنظیم شده است.");
+            properties.add(bulkPayload);
 
             System.out.println(">>> STALWART-SCIM getConfigurationProperties() returned "
                     + properties.size() + " properties");

@@ -84,6 +84,11 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
     private String profileUpdateScimUrl;
     private int maxConcurrentRequests = 8;
     private Semaphore requestSemaphore = new Semaphore(8, true);
+    private String provisioningMode = "INDIVIDUAL";
+    private boolean bulkFallbackToIndividual = true;
+    private int bulkRequestTimeoutMs = 30000;
+    private int bulkMaxPayloadBytes = 900000;
+    private final ConcurrentMap<String, Boolean> bulkUnsupportedEndpoints = new ConcurrentHashMap<>();
 
     @Override
     public void init(Property[] properties) throws IdentityProvisioningException {
@@ -118,9 +123,26 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
                             invertActiveClaim = Boolean.parseBoolean(value);
                     case StalwartSCIMProvisioningConnectorConstants.EMAIL_MEMBERSHIP_GROUP ->
                             emailMembershipGroup = value;
+                    case StalwartSCIMProvisioningConnectorConstants.PROVISIONING_MODE ->
+                            provisioningMode = value.toUpperCase(java.util.Locale.ROOT);
+                    case StalwartSCIMProvisioningConnectorConstants.BULK_FALLBACK_TO_INDIVIDUAL ->
+                            bulkFallbackToIndividual = Boolean.parseBoolean(value);
+                    case StalwartSCIMProvisioningConnectorConstants.BULK_REQUEST_TIMEOUT_MS ->
+                            bulkRequestTimeoutMs = parseIntegerProperty(value, "bulk-request-timeout-ms");
+                    case StalwartSCIMProvisioningConnectorConstants.BULK_MAX_PAYLOAD_BYTES ->
+                            bulkMaxPayloadBytes = parseIntegerProperty(value, "bulk-max-payload-bytes");
                     default -> log.debug("Ignoring unsupported Stalwart connector property: " + property.getName());
                 }
             }
+        }
+        if (!"INDIVIDUAL".equals(provisioningMode) && !"BULK".equals(provisioningMode)) {
+            throw new IdentityProvisioningException("provisioning-mode must be INDIVIDUAL or BULK.");
+        }
+        if (bulkRequestTimeoutMs < 1000 || bulkRequestTimeoutMs > 120000) {
+            throw new IdentityProvisioningException("bulk-request-timeout-ms must be between 1000 and 120000.");
+        }
+        if (bulkMaxPayloadBytes < 1024 || bulkMaxPayloadBytes > 1048576) {
+            throw new IdentityProvisioningException("bulk-max-payload-bytes must be between 1024 and 1048576.");
         }
         if (maxConcurrentRequests < 1 || maxConcurrentRequests > 64) {
             throw new IdentityProvisioningException("max-concurrent-requests must be between 1 and 64.");
@@ -195,7 +217,15 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
     private void createUser(ProvisioningEntity entity) throws IdentityProvisioningException {
         Map<ClaimMapping, List<String>> attrs = entity.getAttributes();
         String userName = targetUserName(attrs, entity.getEntityName());
+        List<String> initialGroups = groupNames(attrs);
+        boolean emailEntitled = initialGroups != null
+                && initialGroups.stream().anyMatch(this::isEmailMembershipGroup);
         JsonObject user = userPayload(attrs, userName);
+        // Email entitlement takes precedence over a mapped active claim. Fold it
+        // into the create document instead of issuing a redundant follow-up PATCH.
+        if (emailEntitled) {
+            user.addProperty("active", true);
+        }
         // WSO2 can retry a failed provisioning event. Reuse an existing account so
         // a later group-membership failure does not cause a duplicate-user conflict.
         String existingId = findUserId(attrs, entity.getEntityName());
@@ -203,19 +233,22 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
             request("POST", "/Users", user);
         } else {
             log.info("Stalwart user already exists; reconciling attributes and memberships: " + userName);
-            updateUser(entity);
+            updateUser(entity, emailEntitled);
         }
         updateUserGroupMemberships(entity);
-        List<String> initialGroups = groupNames(attrs);
-        if (initialGroups != null && initialGroups.stream().anyMatch(this::isEmailMembershipGroup)) {
-            setStalwartActive(attrs, entity.getEntityName(), true);
-        }
     }
 
     private void updateUser(ProvisioningEntity entity) throws IdentityProvisioningException {
+        updateUser(entity, false);
+    }
+
+    private void updateUser(ProvisioningEntity entity, boolean forceEmailEntitlement)
+            throws IdentityProvisioningException {
         Map<ClaimMapping, List<String>> attrs = entity.getAttributes();
-        List<String> newGroups = claimValues(attrs, IdentityProvisioningConstants.NEW_GROUP_CLAIM_URI);
-        List<String> deletedGroups = claimValues(attrs, IdentityProvisioningConstants.DELETED_GROUP_CLAIM_URI);
+        List<String> newGroups = distinctGroupNames(
+                claimValues(attrs, IdentityProvisioningConstants.NEW_GROUP_CLAIM_URI));
+        List<String> deletedGroups = distinctGroupNames(
+                claimValues(attrs, IdentityProvisioningConstants.DELETED_GROUP_CLAIM_URI));
         boolean emailMembershipRemoved = false;
         boolean emailMembershipAdded = newGroups != null
                 && newGroups.stream().anyMatch(this::isEmailMembershipGroup);
@@ -256,15 +289,21 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
                 throw new IdentityProvisioningException("Stalwart user was not found for update; stable externalId lookup failed.");
             }
         }
+        // Compute one effective active value. Email entitlement has precedence
+        // over the independently mapped active claim, and exactly one PATCH is sent.
         String activeClaim = mappedValue(attrs, activeClaimUri);
+        Boolean desiredActive = null;
         if (StringUtils.isNotBlank(activeClaim)) {
             boolean activeValue = parseBooleanClaim(activeClaim, activeClaimUri);
-            setStalwartActive(attrs, entity.getEntityName(), invertActiveClaim ? !activeValue : activeValue);
+            desiredActive = invertActiveClaim ? !activeValue : activeValue;
         }
-        // Email-group entitlement has precedence over an independently mapped active claim.
-        if (emailMembershipRemoved || emailMembershipAdded) {
-            // Group entitlement takes precedence over a simultaneous active claim.
-            setStalwartActive(attrs, entity.getEntityName(), !emailMembershipRemoved);
+        if (forceEmailEntitlement) {
+            desiredActive = true;
+        } else if (emailMembershipRemoved || emailMembershipAdded) {
+            desiredActive = !emailMembershipRemoved;
+        }
+        if (desiredActive != null) {
+            setStalwartActive(attrs, entity.getEntityName(), desiredActive);
         }
     }
 
@@ -531,6 +570,129 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
 
     private JsonObject requestAt(String endpointBaseUrl, String method, String path, JsonObject body)
             throws IdentityProvisioningException {
+        if ("BULK".equals(provisioningMode) && !bulkUnsupportedEndpoints.containsKey(endpointBaseUrl)
+                && !"GET".equalsIgnoreCase(method)) {
+            return requestBulkAt(endpointBaseUrl, method, path, body);
+        }
+        return requestAtIndividual(endpointBaseUrl, method, path, body);
+    }
+
+    /**
+     * Executes one synchronous WSO2 mutation through SCIM Bulk. WSO2's outbound
+     * connector API supplies one entity event at a time and has no reliable
+     * end-of-import callback; therefore this implementation deliberately does
+     * not keep a background queue or acknowledge unflushed work.
+     */
+    private JsonObject requestBulkAt(String endpointBaseUrl, String method, String path, JsonObject data)
+            throws IdentityProvisioningException {
+        JsonObject operation = new JsonObject();
+        operation.addProperty("method", method.toUpperCase(java.util.Locale.ROOT));
+        operation.addProperty("path", path);
+        if (data != null) operation.add("data", data);
+
+        JsonArray operations = new JsonArray();
+        operations.add(operation);
+        JsonObject bulkRequest = new JsonObject();
+        JsonArray schemas = new JsonArray();
+        schemas.add("urn:ietf:params:scim:api:messages:2.0:BulkRequest");
+        bulkRequest.add("schemas", schemas);
+        bulkRequest.add("Operations", operations);
+
+        String payload = bulkRequest.toString();
+        if (payload.getBytes(StandardCharsets.UTF_8).length > bulkMaxPayloadBytes) {
+            throw new IdentityProvisioningException("SCIM Bulk request exceeds bulk-max-payload-bytes; no request was sent.");
+        }
+
+        HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create(endpointBaseUrl + "/Bulk"))
+                .timeout(Duration.ofMillis(bulkRequestTimeoutMs))
+                .header("Authorization", "Bearer " + bearerToken)
+                .header("Accept", "application/scim+json")
+                .header("Content-Type", "application/scim+json")
+                .POST(HttpRequest.BodyPublishers.ofString(payload))
+                .build();
+        try {
+            HttpResponse<String> response = sendWithLimit(request);
+            int httpStatus = response.statusCode();
+            if ((httpStatus == 404 || httpStatus == 405 || httpStatus == 501) && bulkFallbackToIndividual) {
+                // These statuses indicate that the Bulk endpoint is unavailable.
+                // Only this definitive response permits safe fallback.
+                bulkUnsupportedEndpoints.put(endpointBaseUrl, Boolean.TRUE);
+                log.warn("Stalwart SCIM Bulk endpoint is unavailable (HTTP " + httpStatus
+                        + "); switching this connector instance to Individual mode.");
+                return requestAtIndividual(endpointBaseUrl, method, path, data);
+            }
+            if (httpStatus < 200 || httpStatus >= 300) {
+                throw new IdentityProvisioningException("Stalwart SCIM Bulk request failed with HTTP "
+                        + httpStatus + ": " + abbreviate(response.body()));
+            }
+            JsonObject bulkResponse = StringUtils.isBlank(response.body())
+                    ? new JsonObject() : JsonParser.parseString(response.body()).getAsJsonObject();
+            JsonArray results = bulkResponse.has("Operations") && bulkResponse.get("Operations").isJsonArray()
+                    ? bulkResponse.getAsJsonArray("Operations") : new JsonArray();
+            if (results.size() != 1 || !results.get(0).isJsonObject()) {
+                throw new IdentityProvisioningException("Stalwart SCIM Bulk response must contain exactly one operation result.");
+            }
+            JsonObject result = results.get(0).getAsJsonObject();
+            String statusText = result.has("status") ? result.get("status").getAsString() : "";
+            int operationStatus;
+            try {
+                operationStatus = Integer.parseInt(statusText);
+            } catch (NumberFormatException e) {
+                throw new IdentityProvisioningException("Stalwart SCIM Bulk response contains a missing or invalid operation status.");
+            }
+            if (operationStatus < 200 || operationStatus >= 300) {
+                if (operationStatus == 404 && "DELETE".equalsIgnoreCase(method)) return new JsonObject();
+                if (operationStatus == 409 && "POST".equalsIgnoreCase(method)
+                        && postResourceNowExists(path, data)) return new JsonObject();
+                JsonElement detail = result.has("response") ? result.get("response") : result;
+                throw new IdentityProvisioningException("Stalwart SCIM Bulk operation " + method + " "
+                        + path + " failed with status " + operationStatus + ": " + abbreviate(detail.toString()));
+            }
+            JsonObject resource = result.has("response") && result.get("response").isJsonObject()
+                    ? result.getAsJsonObject("response") : new JsonObject();
+            if ("POST".equalsIgnoreCase(method) && resource.has("id") && data != null) {
+                String resourceType = "/Users".equals(path) ? "Users" : "/Groups".equals(path) ? "Groups" : null;
+                if (resourceType != null) {
+                    String attribute = "Users".equals(resourceType) ? "userName" : "displayName";
+                    if (data.has(attribute)) {
+                        cacheResourceId(resourceType, attribute, data.get(attribute).getAsString(),
+                                resource.get("id").getAsString());
+                    }
+                    if ("Users".equals(resourceType) && data.has("externalId")) {
+                        cacheResourceId("Users", "externalId", data.get("externalId").getAsString(),
+                                resource.get("id").getAsString());
+                    }
+                }
+            }
+            return resource;
+        } catch (IOException e) {
+            // Bulk is not blindly retried: the server may have committed the
+            // operation while its response was lost. Reconcile POST by externalId.
+            if ("POST".equalsIgnoreCase(method) && postResourceNowExists(path, data)) {
+                log.info("SCIM Bulk POST reconciled after an ambiguous I/O failure.");
+                return new JsonObject();
+            }
+            throw new IdentityProvisioningException("I/O failure during SCIM Bulk "
+                    + method + " " + path + "; outcome may be unknown and automatic replay was prevented.", e);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IdentityProvisioningException("Interrupted while calling Stalwart SCIM Bulk endpoint.", e);
+        } catch (JsonParseException | IllegalStateException | IllegalArgumentException e) {
+            throw new IdentityProvisioningException("Invalid Stalwart SCIM Bulk response or endpoint.", e);
+        }
+    }
+
+    private int parseIntegerProperty(String value, String name) throws IdentityProvisioningException {
+        try {
+            return Integer.parseInt(value);
+        } catch (NumberFormatException e) {
+            throw new IdentityProvisioningException(name + " must be an integer.", e);
+        }
+    }
+
+    private JsonObject requestAtIndividual(String endpointBaseUrl, String method, String path, JsonObject body)
+            throws IdentityProvisioningException {
         final int maxAttempts = 3;
         String resourceId = resourceIdFromPath(path);
         for (int attempt = 1; attempt <= maxAttempts; attempt++) {
@@ -572,8 +734,7 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
                     retryBackoff(attempt, response.headers().firstValue("Retry-After").orElse(null));
                     continue;
                 }
-            }
-            if (status < 200 || status >= 300) {
+            }            if (status < 200 || status >= 300) {
                 throw new IdentityProvisioningException("Stalwart SCIM " + method + " request failed with HTTP "
                         + status + ": " + abbreviate(response.body()));
             }
@@ -722,13 +883,24 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
     }
 
     private List<String> groupNames(Map<ClaimMapping, List<String>> attrs) {
-        List<String> names = claimValues(attrs, IdentityProvisioningConstants.GROUP_CLAIM_URI);
-        if (names != null) {
-            List<String> normalized = new ArrayList<>();
-            for (String name : names) normalized.add(stripUserStoreDomain(name));
-            return normalized;
+        return distinctGroupNames(claimValues(attrs, IdentityProvisioningConstants.GROUP_CLAIM_URI));
+    }
+
+    /**
+     * Normalize user-store-qualified group names and remove exact duplicates
+     * while preserving source order. Duplicate WSO2 claims must not create
+     * duplicate SCIM membership PATCH operations.
+     */
+    private List<String> distinctGroupNames(List<String> names) {
+        if (names == null) return null;
+        java.util.LinkedHashSet<String> unique = new java.util.LinkedHashSet<>();
+        for (String name : names) {
+            if (StringUtils.isNotBlank(name)) {
+                String normalized = stripUserStoreDomain(name.trim());
+                if (StringUtils.isNotBlank(normalized)) unique.add(normalized);
+            }
         }
-        return null;
+        return new ArrayList<>(unique);
     }
 
     private String valueOf(Property property) {
