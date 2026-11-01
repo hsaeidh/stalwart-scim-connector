@@ -80,16 +80,12 @@ public class StalwartSCIMProvisioningConnectorFactory extends AbstractProvisioni
             fallback.setType("boolean");
             fallback.setDescription("اگر سرور صریحاً اعلام کند endpoint مربوط به Bulk وجود ندارد، کانکتور به درخواست مستقل برمی‌گردد؛ خطاهای مبهم باعث ارسال مجدد نمی‌شوند.");
             properties.add(fallback);
-            Property failOnErrors = property(StalwartSCIMProvisioningConnectorConstants.BULK_FAIL_ON_ERRORS,
-                    "Bulk failOnErrors (0-1000)", "0", false, false, 18);
-            failOnErrors.setDescription("حداکثر تعداد خطا قبل از توقف پردازش Bulk؛ مقدار صفر یعنی توقف خودکار بر اساس این محدودیت غیرفعال باشد.");
-            properties.add(failOnErrors);
             Property bulkTimeout = property(StalwartSCIMProvisioningConnectorConstants.BULK_REQUEST_TIMEOUT_MS,
-                    "Bulk request timeout (1000-120000 ms)", "30000", false, false, 19);
+                    "Bulk request timeout (1000-120000 ms)", "30000", false, false, 18);
             bulkTimeout.setDescription("مهلت انتظار پاسخ سرور برای هر درخواست Bulk به میلی‌ثانیه.");
             properties.add(bulkTimeout);
             Property bulkPayload = property(StalwartSCIMProvisioningConnectorConstants.BULK_MAX_PAYLOAD_BYTES,
-                    "Bulk maximum payload size (1024-1048576 bytes)", "900000", false, false, 20);
+                    "Bulk maximum payload size (1024-1048576 bytes)", "900000", false, false, 19);
             bulkPayload.setDescription("حداکثر اندازه بدنه درخواست Bulk؛ مقدار پیش‌فرض با فاصله امن کمتر از محدودیت یک مگابایتی Stalwart تنظیم شده است.");
             properties.add(bulkPayload);
 
