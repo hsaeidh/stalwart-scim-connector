@@ -118,11 +118,11 @@ jobs:
 
           for marker in (
               "STALWART-SCIM STATIC INIT ENTERING v2.0.2",
-              "STALWART-SCIM STATIC INIT DONE v2.0.1",
-              "STALWART-SCIM CONSTRUCTOR v2.0.1",
-              "STALWART-SCIM ACTIVATE START v2.0.1",
-              "STALWART-SCIM ACTIVATE END v2.0.1",
-              "STALWART-SCIM ACTIVATE FAILED v2.0.1",
+              "STALWART-SCIM STATIC INIT DONE v2.0.2",
+              "STALWART-SCIM CONSTRUCTOR v2.0.2",
+              "STALWART-SCIM ACTIVATE START v2.0.2",
+              "STALWART-SCIM ACTIVATE END v2.0.2",
+              "STALWART-SCIM ACTIVATE FAILED v2.0.2",
           ):
               assert marker.encode() in class_data, f"Missing bytecode diagnostic marker: {marker}"
 
@@ -142,7 +142,7 @@ jobs:
           print("Verified exactly one SCR extender requirement and JavaSE >=21.")
           print("Verified Bundle-StartLevel=1 and Bundle-ActivationPolicy=lazy.")
           print("Verified WSO2 Import-Package ranges and no embedded WSO2 classes.")
-          print("Verified v2.0.1 static-init, constructor and activation diagnostic markers.")
+          print("Verified v2.0.2 static-init, constructor and activation diagnostic markers.")
           source_path = (
               "components/org.stalwart.identity.provisioning.connector.scim/src/main/java/"
               "org/stalwart/identity/provisioning/connector/scim/StalwartSCIMProvisioningConnector.java"
