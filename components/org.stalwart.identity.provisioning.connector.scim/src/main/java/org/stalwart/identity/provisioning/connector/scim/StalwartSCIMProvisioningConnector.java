@@ -248,7 +248,8 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
         List<String> newGroups = distinctGroupNames(
                 claimValues(attrs, IdentityProvisioningConstants.NEW_GROUP_CLAIM_URI));
         List<String> deletedGroups = distinctGroupNames(
-                claimValues(attrs, IdentityProvisioningConstants.DELETED_GROUP_CLAIM_URI));        boolean emailMembershipRemoved = false;
+                claimValues(attrs, IdentityProvisioningConstants.DELETED_GROUP_CLAIM_URI));
+        boolean emailMembershipRemoved = false;
         boolean emailMembershipAdded = newGroups != null
                 && newGroups.stream().anyMatch(this::isEmailMembershipGroup);
         if (emailMembershipAdded && findUserId(attrs, entity.getEntityName()) == null) {
