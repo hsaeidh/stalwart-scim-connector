@@ -39,7 +39,6 @@ semantics are covered by integration tests.
 |---|---:|---|
 | `provisioning-mode` | `INDIVIDUAL` | Choose `INDIVIDUAL` or `BULK`. |
 | `bulk-fallback-to-individual` | `true` | Fall back only when the server definitively reports that Bulk is unavailable (HTTP 404, 405, or 501). |
-| `bulk-fail-on-errors` | `0` | SCIM Bulk `failOnErrors` value. |
 | `bulk-request-timeout-ms` | `30000` | Per-request timeout, from 1000 to 120000 ms. |
 | `bulk-max-payload-bytes` | `900000` | Maximum encoded request size, from 1024 bytes to 1 MiB. |
 
