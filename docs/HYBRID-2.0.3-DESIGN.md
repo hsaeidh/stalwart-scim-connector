@@ -14,7 +14,7 @@ This document is the implementation contract for the 2.0.3 development line. It 
 
 ## Event ingress and duplicate prevention
 
-WSO2 event subscriptions of interest are `POST_ADD_USER` and `POST_SET_USER_CLAIMS`. The event handler must initially run in observation mode in a real IS 7.3.0 test environment. It must log event type and a privacy-safe correlation marker, not claim values, passwords, tokens, or full user records.
+WSO2 event subscriptions of interest are `POST_ADD_USER` and `POST_SET_USER_CLAIMS`. The WSO2 event contract exposes properties including the user name, tenant domain, and user-store manager. After a claims event, the observer/dispatcher should use the supplied user-store context to read the authoritative current FIRSTNAME, LASTNAME, and DISPLAYNAME values; the event payload itself must not be assumed to contain a complete profile. The event handler must initially run in observation mode in a real IS 7.3.0 test environment. It must log event type and a privacy-safe correlation marker, not claim values, passwords, tokens, or full user records.
 
 Do not let the event handler independently call Stalwart while the outbound connector also handles the same mutation. Both ingress paths, if both are eventually required, must call one dispatcher/outbox and share a deterministic idempotency key. Until CSV-import behavior is proven, the existing outbound connector remains authoritative.
 
@@ -87,6 +87,8 @@ Coalesce repeated profile changes for one account into one latest desired value.
 - Resolve resource IDs within the configured SCIM endpoint and tenant security context; never share cache or queue identity across organizations or user stores.
 - Escape SCIM filter string literals and URL-encode filter query parameters and resource path segments.
 - Send SCIM media types and required schema URIs; validate response status and resource IDs before caching.
+- At connection validation, discover `/ServiceProviderConfig` and `/Schemas`; verify the server advertises PATCH and (for BULK/HYBRID) Bulk support, and verify the required User attributes are writable. Do not assume capabilities solely from a product/version string.
+- Use the server's SCIM ETag/version where available for conditional writes, and handle version conflicts by refreshing the current resource and reconciling the intended state rather than blindly overwriting concurrent changes.
 - Do not infer successful provisioning from an HTTP 2xx Bulk envelope alone.
 - Keep bearer tokens and claim values out of logs and diagnostics.
 
