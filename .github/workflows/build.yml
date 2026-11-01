@@ -1,7 +1,7 @@
 name: Build Stalwart SCIM Connector
 on:
   push:
-    branches: [ "main", "release/1.0.8", "release/1.0.9", "release/2.0.1" ]
+    branches: [ "main", "release/1.0.8", "release/1.0.9", "release/2.0.1", "feature/scim-bulk-2.0.2" ]
   pull_request:
   workflow_dispatch:
 permissions:
@@ -59,7 +59,7 @@ jobs:
           imports = attributes.get("Import-Package", "")
           service_component = attributes.get("Service-Component", "")
           require_capability = attributes.get("Require-Capability", "")
-          assert version == "2.0.1", f"Unexpected Bundle-Version: {version!r}"
+          assert version == "2.0.2", f"Unexpected Bundle-Version: {version!r}"
           assert attributes.get("Bundle-SymbolicName", "").split(";")[0] == (
               "org.stalwart.identity.provisioning.connector.scim"
           ), "Unexpected Bundle-SymbolicName"
@@ -117,7 +117,7 @@ jobs:
           assert root.attrib.get("deactivate") == "deactivate", "Missing deactivate method"
 
           for marker in (
-              "STALWART-SCIM STATIC INIT ENTERING v2.0.1",
+              "STALWART-SCIM STATIC INIT ENTERING v2.0.2",
               "STALWART-SCIM STATIC INIT DONE v2.0.1",
               "STALWART-SCIM CONSTRUCTOR v2.0.1",
               "STALWART-SCIM ACTIVATE START v2.0.1",
@@ -192,7 +192,7 @@ jobs:
       - name: Upload connector JAR
         uses: actions/upload-artifact@v6
         with:
-          name: stalwart-scim-connector-2.0.1
+          name: stalwart-scim-connector-2.0.2
           path: components/org.stalwart.identity.provisioning.connector.scim/target/*.jar
           if-no-files-found: error
           retention-days: 30
