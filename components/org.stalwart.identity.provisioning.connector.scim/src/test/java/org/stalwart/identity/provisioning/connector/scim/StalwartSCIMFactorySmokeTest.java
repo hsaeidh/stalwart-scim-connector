@@ -26,8 +26,8 @@ public final class StalwartSCIMFactorySmokeTest {
         }
 
         List<Property> properties = factory.getConfigurationProperties();
-        if (properties == null || properties.size() != 15) {
-            throw new IllegalStateException("Expected 11 configuration properties, got: "
+        if (properties == null || properties.size() != 20) {
+            throw new IllegalStateException("Expected 20 configuration properties, got: "
                     + (properties == null ? "null" : properties.size()));
         }
 
@@ -56,7 +56,12 @@ public final class StalwartSCIMFactorySmokeTest {
                 StalwartSCIMProvisioningConnectorConstants.MAX_CONCURRENT_REQUESTS,
                 StalwartSCIMProvisioningConnectorConstants.ACTIVE_CLAIM_URI,
                 StalwartSCIMProvisioningConnectorConstants.INVERT_ACTIVE_CLAIM,
-                StalwartSCIMProvisioningConnectorConstants.EMAIL_MEMBERSHIP_GROUP
+                StalwartSCIMProvisioningConnectorConstants.EMAIL_MEMBERSHIP_GROUP,
+                StalwartSCIMProvisioningConnectorConstants.PROVISIONING_MODE,
+                StalwartSCIMProvisioningConnectorConstants.BULK_FALLBACK_TO_INDIVIDUAL,
+                StalwartSCIMProvisioningConnectorConstants.BULK_FAIL_ON_ERRORS,
+                StalwartSCIMProvisioningConnectorConstants.BULK_REQUEST_TIMEOUT_MS,
+                StalwartSCIMProvisioningConnectorConstants.BULK_MAX_PAYLOAD_BYTES
         };
         for (String name : expectedNames) {
             if (!byName.containsKey(name)) {
@@ -82,11 +87,16 @@ public final class StalwartSCIMFactorySmokeTest {
         assertDefault(byName, StalwartSCIMProvisioningConnectorConstants.MAX_CONCURRENT_REQUESTS, "8");
         assertDefault(byName, StalwartSCIMProvisioningConnectorConstants.INVERT_ACTIVE_CLAIM, "false");
         assertDefault(byName, StalwartSCIMProvisioningConnectorConstants.EMAIL_MEMBERSHIP_GROUP, "Email");
+        assertDefault(byName, StalwartSCIMProvisioningConnectorConstants.PROVISIONING_MODE, "INDIVIDUAL");
+        assertDefault(byName, StalwartSCIMProvisioningConnectorConstants.BULK_FALLBACK_TO_INDIVIDUAL, "true");
+        assertDefault(byName, StalwartSCIMProvisioningConnectorConstants.BULK_FAIL_ON_ERRORS, "0");
+        assertDefault(byName, StalwartSCIMProvisioningConnectorConstants.BULK_REQUEST_TIMEOUT_MS, "30000");
+        assertDefault(byName, StalwartSCIMProvisioningConnectorConstants.BULK_MAX_PAYLOAD_BYTES, "900000");
 
         System.out.println("Connector type: " + factory.getConnectorType());
         System.out.println("Properties count: " + properties.size());
         System.out.println("Required claim mapping defaults: emailaddress -> userName, username -> externalId");
-        System.out.println("SMOKE TEST PASSED v2.0.1");
+        System.out.println("SMOKE TEST PASSED v2.0.2");
     }
 
     private static void assertDefault(Map<String, Property> properties, String name, String expected) {
