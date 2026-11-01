@@ -86,7 +86,6 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
     private Semaphore requestSemaphore = new Semaphore(8, true);
     private String provisioningMode = "INDIVIDUAL";
     private boolean bulkFallbackToIndividual = true;
-    private int bulkFailOnErrors = 0;
     private int bulkRequestTimeoutMs = 30000;
     private int bulkMaxPayloadBytes = 900000;
     private final ConcurrentMap<String, Boolean> bulkUnsupportedEndpoints = new ConcurrentHashMap<>();
@@ -128,8 +127,6 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
                             provisioningMode = value.toUpperCase(java.util.Locale.ROOT);
                     case StalwartSCIMProvisioningConnectorConstants.BULK_FALLBACK_TO_INDIVIDUAL ->
                             bulkFallbackToIndividual = Boolean.parseBoolean(value);
-                    case StalwartSCIMProvisioningConnectorConstants.BULK_FAIL_ON_ERRORS ->
-                            bulkFailOnErrors = parseIntegerProperty(value, "bulk-fail-on-errors");
                     case StalwartSCIMProvisioningConnectorConstants.BULK_REQUEST_TIMEOUT_MS ->
                             bulkRequestTimeoutMs = parseIntegerProperty(value, "bulk-request-timeout-ms");
                     case StalwartSCIMProvisioningConnectorConstants.BULK_MAX_PAYLOAD_BYTES ->
@@ -140,9 +137,6 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
         }
         if (!"INDIVIDUAL".equals(provisioningMode) && !"BULK".equals(provisioningMode)) {
             throw new IdentityProvisioningException("provisioning-mode must be INDIVIDUAL or BULK.");
-        }
-        if (bulkFailOnErrors < 0 || bulkFailOnErrors > 1000) {
-            throw new IdentityProvisioningException("bulk-fail-on-errors must be between 0 and 1000.");
         }
         if (bulkRequestTimeoutMs < 1000 || bulkRequestTimeoutMs > 120000) {
             throw new IdentityProvisioningException("bulk-request-timeout-ms must be between 1000 and 120000.");
@@ -585,7 +579,6 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
         JsonArray schemas = new JsonArray();
         schemas.add("urn:ietf:params:scim:api:messages:2.0:BulkRequest");
         bulkRequest.add("schemas", schemas);
-        bulkRequest.addProperty("failOnErrors", bulkFailOnErrors);
         bulkRequest.add("Operations", operations);
 
         String payload = bulkRequest.toString();
