@@ -494,7 +494,8 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
         }
         if (id != null) return id;
         // Email identifiers can legitimately be supplied by legacy group claims;
-        // numeric/stable identifiers are externalId and need no username fallback.        if (candidate.indexOf('@') >= 0) {
+        // numeric/stable identifiers are externalId and need no username fallback.
+        if (candidate.indexOf('@') >= 0) {
             id = findResourceId("Users", "userName", candidate);
             return id != null ? id : (candidate.equals(identifier) ? null
                     : findResourceId("Users", "userName", identifier));
