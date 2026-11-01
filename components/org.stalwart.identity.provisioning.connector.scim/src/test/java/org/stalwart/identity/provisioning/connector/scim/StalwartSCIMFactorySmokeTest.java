@@ -93,6 +93,35 @@ public final class StalwartSCIMFactorySmokeTest {
         assertDefault(byName, StalwartSCIMProvisioningConnectorConstants.BULK_REQUEST_TIMEOUT_MS, "30000");
         assertDefault(byName, StalwartSCIMProvisioningConnectorConstants.BULK_MAX_PAYLOAD_BYTES, "900000");
 
+        // Verify the new mode can be initialized without changing the OSGi factory contract.
+        Property baseUrl = new Property();
+        baseUrl.setName(StalwartSCIMProvisioningConnectorConstants.BASE_URL);
+        baseUrl.setValue("https://mail.example.com/scim/v2");
+        Property token = new Property();
+        token.setName(StalwartSCIMProvisioningConnectorConstants.BEARER_TOKEN);
+        token.setValue("smoke-test-token");
+        Property mode = new Property();
+        mode.setName(StalwartSCIMProvisioningConnectorConstants.PROVISIONING_MODE);
+        mode.setValue("BULK");
+        try {
+            new StalwartSCIMProvisioningConnector().init(new Property[]{baseUrl, token, mode});
+        } catch (org.wso2.carbon.identity.provisioning.IdentityProvisioningException e) {
+            throw new IllegalStateException("Valid BULK configuration was rejected.", e);
+        }
+
+        Property invalidMode = new Property();
+        invalidMode.setName(StalwartSCIMProvisioningConnectorConstants.PROVISIONING_MODE);
+        invalidMode.setValue("ASYNC");
+        boolean invalidModeRejected = false;
+        try {
+            new StalwartSCIMProvisioningConnector().init(new Property[]{baseUrl, token, invalidMode});
+        } catch (org.wso2.carbon.identity.provisioning.IdentityProvisioningException expected) {
+            invalidModeRejected = true;
+        }
+        if (!invalidModeRejected) {
+            throw new IllegalStateException("Unsupported provisioning mode must be rejected.");
+        }
+
         System.out.println("Connector type: " + factory.getConnectorType());
         System.out.println("Properties count: " + properties.size());
         System.out.println("Required claim mapping defaults: emailaddress -> userName, username -> externalId");
