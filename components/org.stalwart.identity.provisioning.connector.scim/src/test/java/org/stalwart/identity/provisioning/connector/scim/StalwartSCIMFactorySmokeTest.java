@@ -33,8 +33,8 @@ public final class StalwartSCIMFactorySmokeTest {
         }
 
         List<Property> properties = factory.getConfigurationProperties();
-        if (properties == null || properties.size() != 20) {
-            throw new IllegalStateException("Expected 20 configuration properties, got: "
+        if (properties == null || properties.size() != 19) {
+            throw new IllegalStateException("Expected 19 configuration properties, got: "
                     + (properties == null ? "null" : properties.size()));
         }
 
@@ -66,7 +66,6 @@ public final class StalwartSCIMFactorySmokeTest {
                 StalwartSCIMProvisioningConnectorConstants.EMAIL_MEMBERSHIP_GROUP,
                 StalwartSCIMProvisioningConnectorConstants.PROVISIONING_MODE,
                 StalwartSCIMProvisioningConnectorConstants.BULK_FALLBACK_TO_INDIVIDUAL,
-                StalwartSCIMProvisioningConnectorConstants.BULK_FAIL_ON_ERRORS,
                 StalwartSCIMProvisioningConnectorConstants.BULK_REQUEST_TIMEOUT_MS,
                 StalwartSCIMProvisioningConnectorConstants.BULK_MAX_PAYLOAD_BYTES
         };
@@ -96,7 +95,6 @@ public final class StalwartSCIMFactorySmokeTest {
         assertDefault(byName, StalwartSCIMProvisioningConnectorConstants.EMAIL_MEMBERSHIP_GROUP, "Email");
         assertDefault(byName, StalwartSCIMProvisioningConnectorConstants.PROVISIONING_MODE, "INDIVIDUAL");
         assertDefault(byName, StalwartSCIMProvisioningConnectorConstants.BULK_FALLBACK_TO_INDIVIDUAL, "true");
-        assertDefault(byName, StalwartSCIMProvisioningConnectorConstants.BULK_FAIL_ON_ERRORS, "0");
         assertDefault(byName, StalwartSCIMProvisioningConnectorConstants.BULK_REQUEST_TIMEOUT_MS, "30000");
         assertDefault(byName, StalwartSCIMProvisioningConnectorConstants.BULK_MAX_PAYLOAD_BYTES, "900000");
 
