@@ -55,7 +55,12 @@ Use the SCIM PatchOp schema and only `replace` operations for supported profile 
 
 Never include `userName`, `externalId`, `emails`, `password`, `groups`, `active`, or arbitrary claims in a profile-update payload. Empty values are not sent as replacements; partial name input must not erase or truncate a complete display name. Do not emit a PATCH document with an empty Operations array.
 
-Coalesce repeated profile changes for one account into one latest desired value. Deduplicate operations by SCIM path so one Bulk request never contains multiple conflicting writes to the same user/path.
+The trigger condition is OR, not AND: a change to FIRSTNAME, LASTNAME, or DISPLAYNAME individually must be detected. Do not infer the changed field merely from whichever values happen to be present in a partial event. The dispatcher must obtain the complete current authoritative name snapshot from WSO2 (or receive an explicitly complete snapshot) and retain change-origin metadata:
+- if DISPLAYNAME itself changed, use its current non-empty value;
+- if FIRSTNAME or LASTNAME changed, compose the display name from the latest complete FIRSTNAME and LASTNAME values, even if an unchanged/stale DISPLAYNAME claim is also present;
+- if a complete safe value cannot be obtained, do not send a destructive partial replacement; keep the item pending with a diagnostic state.
+
+Coalesce repeated profile changes for one account into one latest desired value. Deduplicate operations by SCIM path so one Bulk request never contains multiple conflicting writes to the same user/path. If the existing outbound provisioning callback does not expose which claim changed, the event observer/dispatcher must reconcile the current WSO2 claim snapshot rather than guessing from attribute presence.
 
 ### Active state and group membership
 
