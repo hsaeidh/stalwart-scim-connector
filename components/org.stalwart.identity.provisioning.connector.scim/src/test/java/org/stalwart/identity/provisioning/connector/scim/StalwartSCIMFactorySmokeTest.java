@@ -1,6 +1,13 @@
 package org.stalwart.identity.provisioning.connector.scim;
 
 import org.wso2.carbon.identity.application.common.model.Property;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
+import com.sun.net.httpserver.HttpServer;
+import java.lang.reflect.Method;
+import java.net.InetSocketAddress;
+import java.nio.charset.StandardCharsets;
+import java.util.concurrent.atomic.AtomicReference;
 
 import java.util.HashMap;
 import java.util.List;
@@ -26,8 +33,8 @@ public final class StalwartSCIMFactorySmokeTest {
         }
 
         List<Property> properties = factory.getConfigurationProperties();
-        if (properties == null || properties.size() != 15) {
-            throw new IllegalStateException("Expected 11 configuration properties, got: "
+        if (properties == null || properties.size() != 19) {
+            throw new IllegalStateException("Expected 19 configuration properties, got: "
                     + (properties == null ? "null" : properties.size()));
         }
 
@@ -56,7 +63,11 @@ public final class StalwartSCIMFactorySmokeTest {
                 StalwartSCIMProvisioningConnectorConstants.MAX_CONCURRENT_REQUESTS,
                 StalwartSCIMProvisioningConnectorConstants.ACTIVE_CLAIM_URI,
                 StalwartSCIMProvisioningConnectorConstants.INVERT_ACTIVE_CLAIM,
-                StalwartSCIMProvisioningConnectorConstants.EMAIL_MEMBERSHIP_GROUP
+                StalwartSCIMProvisioningConnectorConstants.EMAIL_MEMBERSHIP_GROUP,
+                StalwartSCIMProvisioningConnectorConstants.PROVISIONING_MODE,
+                StalwartSCIMProvisioningConnectorConstants.BULK_FALLBACK_TO_INDIVIDUAL,
+                StalwartSCIMProvisioningConnectorConstants.BULK_REQUEST_TIMEOUT_MS,
+                StalwartSCIMProvisioningConnectorConstants.BULK_MAX_PAYLOAD_BYTES
         };
         for (String name : expectedNames) {
             if (!byName.containsKey(name)) {
@@ -82,11 +93,118 @@ public final class StalwartSCIMFactorySmokeTest {
         assertDefault(byName, StalwartSCIMProvisioningConnectorConstants.MAX_CONCURRENT_REQUESTS, "8");
         assertDefault(byName, StalwartSCIMProvisioningConnectorConstants.INVERT_ACTIVE_CLAIM, "false");
         assertDefault(byName, StalwartSCIMProvisioningConnectorConstants.EMAIL_MEMBERSHIP_GROUP, "Email");
+        assertDefault(byName, StalwartSCIMProvisioningConnectorConstants.PROVISIONING_MODE, "INDIVIDUAL");
+        assertDefault(byName, StalwartSCIMProvisioningConnectorConstants.BULK_FALLBACK_TO_INDIVIDUAL, "true");
+        assertDefault(byName, StalwartSCIMProvisioningConnectorConstants.BULK_REQUEST_TIMEOUT_MS, "30000");
+        assertDefault(byName, StalwartSCIMProvisioningConnectorConstants.BULK_MAX_PAYLOAD_BYTES, "900000");
+
+        // Verify the new mode can be initialized without changing the OSGi factory contract.
+        Property baseUrl = new Property();
+        baseUrl.setName(StalwartSCIMProvisioningConnectorConstants.BASE_URL);
+        baseUrl.setValue("https://mail.example.com/scim/v2");
+        Property token = new Property();
+        token.setName(StalwartSCIMProvisioningConnectorConstants.BEARER_TOKEN);
+        token.setValue("smoke-test-token");
+        Property mode = new Property();
+        mode.setName(StalwartSCIMProvisioningConnectorConstants.PROVISIONING_MODE);
+        mode.setValue("BULK");
+        try {
+            new StalwartSCIMProvisioningConnector().init(new Property[]{baseUrl, token, mode});
+        } catch (org.wso2.carbon.identity.provisioning.IdentityProvisioningException e) {
+            throw new IllegalStateException("Valid BULK configuration was rejected.", e);
+        }
+
+        Property invalidMode = new Property();
+        invalidMode.setName(StalwartSCIMProvisioningConnectorConstants.PROVISIONING_MODE);
+        invalidMode.setValue("ASYNC");
+        boolean invalidModeRejected = false;
+        try {
+            new StalwartSCIMProvisioningConnector().init(new Property[]{baseUrl, token, invalidMode});
+        } catch (org.wso2.carbon.identity.provisioning.IdentityProvisioningException expected) {
+            invalidModeRejected = true;
+        }
+        if (!invalidModeRejected) {
+            throw new IllegalStateException("Unsupported provisioning mode must be rejected.");
+        }
+
+        assertBulkTransportRequest();
 
         System.out.println("Connector type: " + factory.getConnectorType());
         System.out.println("Properties count: " + properties.size());
         System.out.println("Required claim mapping defaults: emailaddress -> userName, username -> externalId");
-        System.out.println("SMOKE TEST PASSED v2.0.1");
+        System.out.println("SMOKE TEST PASSED v2.0.2");
+    }
+
+    private static void assertBulkTransportRequest() {
+        HttpServer server = null;
+        try {
+            AtomicReference<String> capturedRequest = new AtomicReference<>();
+            server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+            server.createContext("/scim/v2/Bulk", exchange -> {
+                capturedRequest.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+                JsonObject operationResult = new JsonObject();
+                operationResult.addProperty("status", "201");
+                JsonObject resource = new JsonObject();
+                resource.addProperty("id", "smoke-user-id");
+                resource.addProperty("userName", "bulk-smoke@example.com");
+                resource.addProperty("externalId", "bulk-smoke-id");
+                operationResult.add("response", resource);
+                com.google.gson.JsonArray operationResults = new com.google.gson.JsonArray();
+                operationResults.add(operationResult);
+                JsonObject bulkResponse = new JsonObject();
+                com.google.gson.JsonArray schemas = new com.google.gson.JsonArray();
+                schemas.add("urn:ietf:params:scim:api:messages:2.0:BulkResponse");
+                bulkResponse.add("schemas", schemas);
+                bulkResponse.add("Operations", operationResults);
+                byte[] bytes = bulkResponse.toString().getBytes(StandardCharsets.UTF_8);
+                exchange.getResponseHeaders().set("Content-Type", "application/scim+json");
+                exchange.sendResponseHeaders(200, bytes.length);
+                try (var output = exchange.getResponseBody()) {
+                    output.write(bytes);
+                }
+            });
+            server.start();
+
+            String base = "http://127.0.0.1:" + server.getAddress().getPort() + "/scim/v2";
+            Property baseUrl = new Property();
+            baseUrl.setName(StalwartSCIMProvisioningConnectorConstants.BASE_URL);
+            baseUrl.setValue(base);
+            Property token = new Property();
+            token.setName(StalwartSCIMProvisioningConnectorConstants.BEARER_TOKEN);
+            token.setValue("smoke-test-token");
+            Property mode = new Property();
+            mode.setName(StalwartSCIMProvisioningConnectorConstants.PROVISIONING_MODE);
+            mode.setValue("BULK");
+            StalwartSCIMProvisioningConnector connector = new StalwartSCIMProvisioningConnector();
+            connector.init(new Property[]{baseUrl, token, mode});
+
+            JsonObject user = new JsonObject();
+            user.addProperty("userName", "bulk-smoke@example.com");
+            user.addProperty("externalId", "bulk-smoke-id");
+            Method requestAt = StalwartSCIMProvisioningConnector.class.getDeclaredMethod(
+                    "requestAt", String.class, String.class, String.class, JsonObject.class);
+            requestAt.setAccessible(true);
+            JsonObject result = (JsonObject) requestAt.invoke(connector, base, "POST", "/Users", user);
+
+            if (!"smoke-user-id".equals(result.get("id").getAsString())) {
+                throw new IllegalStateException("Bulk operation response resource was not parsed correctly.");
+            }
+            JsonObject sent = JsonParser.parseString(capturedRequest.get()).getAsJsonObject();
+            if (!"urn:ietf:params:scim:api:messages:2.0:BulkRequest"
+                    .equals(sent.getAsJsonArray("schemas").get(0).getAsString())) {
+                throw new IllegalStateException("Incorrect SCIM BulkRequest schema.");
+            }
+            JsonObject operation = sent.getAsJsonArray("Operations").get(0).getAsJsonObject();
+            if (!"POST".equals(operation.get("method").getAsString())
+                    || !"/Users".equals(operation.get("path").getAsString())
+                    || !"bulk-smoke-id".equals(operation.getAsJsonObject("data").get("externalId").getAsString())) {
+                throw new IllegalStateException("SCIM Bulk operation was serialized incorrectly.");
+            }
+        } catch (Exception e) {
+            throw new IllegalStateException("SCIM Bulk transport smoke test failed.", e);
+        } finally {
+            if (server != null) server.stop(0);
+        }
     }
 
     private static void assertDefault(Map<String, Property> properties, String name, String expected) {
