@@ -34,12 +34,16 @@ Set the WSO2 JVM system properties:
 
 The JNDI resource must resolve to a durable shared JDBC DataSource. In a multi-node WSO2 deployment, all nodes must use the same database. The connector creates the table `STALWART_SCIM_PROFILE_OUTBOX` if it does not exist.
 
+Successful rows are retained for 30 days; DEAD rows are retained for operator inspection. The outbox stores scope, externalId, displayName, source, retry state and diagnostic text, but never bearer tokens or passwords. Use the database to inspect DEAD rows and remediate them; do not delete pending or in-flight rows during normal operation.
+
 For the WSO2 outbound connection, set:
 
 - `provisioning-mode=HYBRID`
 - `enable-profile-updates=true`
 - `hybrid-outbox-jndi-name=jdbc/WSO2CarbonDB` (must match the JVM property)
 - `hybrid-scope-id` to the exact event scope: `targetId|tenantDomain|userStoreDomain`, or `targetId|organizationId|tenantDomain|userStoreDomain` when the WSO2 event supplies a resident/accessing organization ID. `targetId` must match the JVM property and be unique per Stalwart endpoint.
+
+If your outbound connection uses custom claim URIs, set the matching JVM properties `stalwart.scim.hybrid.external-id-claim-uri`, `stalwart.scim.hybrid.given-name-claim-uri`, `stalwart.scim.hybrid.family-name-claim-uri`, and `stalwart.scim.hybrid.display-name-claim-uri`. HYBRID initialization rejects mismatches rather than silently reading different claims.
 
 Enable the event handler in `repository/conf/deployment.toml`:
 
