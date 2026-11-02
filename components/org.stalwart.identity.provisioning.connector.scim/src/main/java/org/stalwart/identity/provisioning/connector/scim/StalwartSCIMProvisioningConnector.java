@@ -160,7 +160,7 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
                 throw new IdentityProvisioningException("HYBRID mode requires enable-profile-updates=true.");
             }
             if (StringUtils.isBlank(hybridScopeId)
-                    || !hybridScopeId.trim().matches("^[^|]+\\|[^|]+$")) {
+                    || !hybridScopeId.trim().matches("^[^|]+\\|[^|]+(?:\\|[^|]+)?$")) {
                 throw new IdentityProvisioningException(
                         "hybrid-scope-id is required in HYBRID mode and must be tenantDomain|userStoreDomain.");
             }
@@ -170,8 +170,12 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
                         "HYBRID mode requires JVM system property -Dstalwart.scim.hybrid.enabled=true "
                                 + "so POST_SET_USER_CLAIMS can enqueue complete WSO2 snapshots.");
             }
-            if (StringUtils.isBlank(hybridOutboxJndiName)) {
-                hybridOutboxJndiName = HybridProfileOutbox.DEFAULT_JNDI_NAME;
+            String eventHandlerJndi = System.getProperty("stalwart.scim.hybrid.outbox.jndi",
+                    HybridProfileOutbox.DEFAULT_JNDI_NAME);
+            if (StringUtils.isBlank(hybridOutboxJndiName)) hybridOutboxJndiName = eventHandlerJndi;
+            if (!hybridOutboxJndiName.equals(eventHandlerJndi)) {
+                throw new IdentityProvisioningException(
+                        "hybrid-outbox-jndi-name must match JVM property -Dstalwart.scim.hybrid.outbox.jndi.");
             }
         }
         if (bulkRequestTimeoutMs < 1000 || bulkRequestTimeoutMs > 120000) {
