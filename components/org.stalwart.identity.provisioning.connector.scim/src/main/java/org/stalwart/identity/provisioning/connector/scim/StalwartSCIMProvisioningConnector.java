@@ -584,15 +584,23 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
                 }
             }
         }
-        JsonObject patch = userPatch(attrs, enableProfileUpdates);
-        if (patch.getAsJsonArray("Operations").size() > 0) {
-            String id = findUserId(attrs, entity.getEntityName());
-            if (id != null) {
-                // Profile claims are authoritative deltas from WSO2. Avoid a
-                // read-before-write GET; SCIM replace operations are idempotent.
-                requestAt(profileUpdateBaseUrl(), "PATCH", "/Users/" + pathSegment(id), patch);
-            } else {
-                throw new IdentityProvisioningException("Stalwart user was not found for update; stable externalId lookup failed.");
+        if ("HYBRID".equals(provisioningMode)) {
+            // POST_SET_USER_CLAIMS is the authoritative source for a complete
+            // WSO2 profile snapshot and change-origin metadata. The separate
+            // event handler writes that snapshot to the durable outbox. Do not
+            // issue a second PATCH from this callback.
+            log.debug("HYBRID profile update deferred to the durable WSO2 event outbox.");
+        } else {
+            JsonObject patch = userPatch(attrs, enableProfileUpdates);
+            if (patch.getAsJsonArray("Operations").size() > 0) {
+                String id = findUserId(attrs, entity.getEntityName());
+                if (id != null) {
+                    // Profile claims are authoritative deltas from WSO2. Avoid a
+                    // read-before-write GET; SCIM replace operations are idempotent.
+                    requestAt(profileUpdateBaseUrl(), "PATCH", "/Users/" + pathSegment(id), patch);
+                } else {
+                    throw new IdentityProvisioningException("Stalwart user was not found for update; stable externalId lookup failed.");
+                }
             }
         }
         // Compute one effective active value. Email entitlement has precedence
