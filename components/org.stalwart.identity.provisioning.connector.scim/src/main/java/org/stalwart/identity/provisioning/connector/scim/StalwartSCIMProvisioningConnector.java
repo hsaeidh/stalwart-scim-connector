@@ -225,20 +225,19 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
                     "A non-empty stable WSO2 externalId claim is required to reconcile a Stalwart account.");
         }
         String existingId = findResourceId("Users", "externalId", externalId);
-        String userName = existingId == null ? targetUserName(attrs, entity.getEntityName())
-                : mappedValue(attrs, userNameClaimUri);
         List<String> initialGroups = groupNames(attrs);
         boolean emailEntitled = initialGroups != null
                 && initialGroups.stream().anyMatch(this::isEmailMembershipGroup);
-        JsonObject user = userPayload(attrs, userName);
-        // Email entitlement takes precedence over a mapped active claim. Fold it
-        // into the create document instead of issuing a redundant follow-up PATCH.
-        if (emailEntitled) {
-            user.addProperty("active", true);
-        }
         // WSO2 can retry a failed provisioning event. Reuse an existing account so
         // a later group-membership failure does not cause a duplicate-user conflict.
         if (existingId == null) {
+            String userName = targetUserName(attrs, entity.getEntityName());
+            JsonObject user = userPayload(attrs, userName);
+            // Email entitlement takes precedence over a mapped active claim. Fold it
+            // into the create document instead of issuing a redundant follow-up PATCH.
+            if (emailEntitled) {
+                user.addProperty("active", true);
+            }
             request("POST", "/Users", user);
         } else {
             log.info("Stalwart user already exists; reconciling attributes and memberships: " + userName);
