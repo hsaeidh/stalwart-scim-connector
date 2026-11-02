@@ -142,7 +142,13 @@ public final class StalwartSCIMProfileEventHandler extends AbstractEventHandler 
             throw new IllegalStateException("The authoritative current WSO2 name snapshot is empty.");
         }
 
-        String scope = tenantDomain + "|" + userStoreDomain;
+        String organizationId = stringValue(properties.get("USER_RESIDENT_ORGANIZATION_ID"));
+        if (organizationId == null) {
+            organizationId = stringValue(properties.get("ACCESSING_ORGANIZATION_ID"));
+        }
+        String scope = organizationId == null
+                ? tenantDomain + "|" + userStoreDomain
+                : organizationId + "|" + tenantDomain + "|" + userStoreDomain;
         String jndiName = System.getProperty("stalwart.scim.hybrid.outbox.jndi",
                 HybridProfileOutbox.DEFAULT_JNDI_NAME);
         getOutbox(jndiName).enqueue(scope, externalId, displayName, source, 2);
