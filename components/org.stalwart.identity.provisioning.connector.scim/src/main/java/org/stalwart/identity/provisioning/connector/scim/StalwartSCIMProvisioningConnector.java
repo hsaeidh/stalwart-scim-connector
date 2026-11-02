@@ -520,7 +520,12 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
             userName = fallback.trim();
         }
         if (StringUtils.isBlank(userName)) return null;
-        return findResourceId("Users", "userName", targetUserName(attrs, userName));
+        userName = userName.trim();
+        if (!userName.matches("^[^\\s@]+@[^\\s@]+$")) {
+            throw new IdentityProvisioningException(
+                    "Stalwart SCIM userName fallback must be a full email address.");
+        }
+        return findResourceId("Users", "userName", userName);
     }
 
     private String findUserIdByIdentifier(String identifier) throws IdentityProvisioningException {
