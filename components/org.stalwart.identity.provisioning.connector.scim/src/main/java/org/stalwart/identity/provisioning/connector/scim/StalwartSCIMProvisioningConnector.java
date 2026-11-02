@@ -66,6 +66,8 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
     private static final AtomicInteger CACHE_INSERTIONS = new AtomicInteger();
     private static final ConcurrentMap<String, StalwartSCIMProvisioningConnector> HYBRID_WORKERS =
             new ConcurrentHashMap<>();
+    private static final ConcurrentMap<String, StalwartSCIMProvisioningConnector> BULK_WORKERS =
+            new ConcurrentHashMap<>();
     private static final AtomicBoolean HYBRID_SCHEDULER_STARTED = new AtomicBoolean(false);
     private static volatile ScheduledExecutorService hybridScheduler;
     private static final class CacheEntry {
@@ -100,8 +102,12 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
     private int bulkMaxPayloadBytes = 900000;
     private String hybridOutboxJndiName = HybridProfileOutbox.DEFAULT_JNDI_NAME;
     private String hybridScopeId;
+    private String legacyHybridScopeId;
     private HybridProfileOutbox hybridProfileOutbox;
+    private ScimOperationOutbox scimOperationOutbox;
+    private String scimOperationScope;
     private final ConcurrentMap<String, Boolean> bulkUnsupportedEndpoints = new ConcurrentHashMap<>();
+    private final Object scimOutboxFlushLock = new Object();
 
     @Override
     public void init(Property[] properties) throws IdentityProvisioningException {
@@ -146,8 +152,8 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
                             bulkMaxPayloadBytes = parseIntegerProperty(value, "bulk-max-payload-bytes");
                     case StalwartSCIMProvisioningConnectorConstants.HYBRID_OUTBOX_JNDI_NAME ->
                             hybridOutboxJndiName = value;
-                    case StalwartSCIMProvisioningConnectorConstants.HYBRID_SCOPE_ID ->
-                            hybridScopeId = value;
+                    case StalwartSCIMProvisioningConnectorConstants.LEGACY_HYBRID_SCOPE_ID ->
+                            legacyHybridScopeId = value;
                     default -> log.debug("Ignoring unsupported Stalwart connector property: " + property.getName());
                 }
             }
@@ -156,41 +162,8 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
                 && !"HYBRID".equals(provisioningMode)) {
             throw new IdentityProvisioningException("provisioning-mode must be INDIVIDUAL, BULK or HYBRID.");
         }
-        if ("HYBRID".equals(provisioningMode)) {
-            if (!enableProfileUpdates) {
-                throw new IdentityProvisioningException("HYBRID mode requires enable-profile-updates=true.");
-            }
-            if (StringUtils.isBlank(hybridScopeId)
-                    || !hybridScopeId.trim().matches("^[^|]+\\|[^|]+\\|[^|]+(?:\\|[^|]+)?$")) {
-                throw new IdentityProvisioningException(
-                        "hybrid-scope-id is required in HYBRID mode and must be tenantDomain|userStoreDomain.");
-            }
-            hybridScopeId = hybridScopeId.trim();
-            String targetId = System.getProperty("stalwart.scim.hybrid.target-id", "default");
-            if (!hybridScopeId.startsWith(targetId + "|")) {
-                throw new IdentityProvisioningException(
-                        "hybrid-scope-id must start with JVM property -Dstalwart.scim.hybrid.target-id.");
-            }
-            if (!Boolean.parseBoolean(System.getProperty("stalwart.scim.hybrid.enabled", "false"))) {
-                throw new IdentityProvisioningException(
-                        "HYBRID mode requires JVM system property -Dstalwart.scim.hybrid.enabled=true "
-                                + "so POST_SET_USER_CLAIMS can enqueue complete WSO2 snapshots.");
-            }
-            String eventHandlerJndi = System.getProperty("stalwart.scim.hybrid.outbox.jndi",
-                    HybridProfileOutbox.DEFAULT_JNDI_NAME);
-            if (StringUtils.isBlank(hybridOutboxJndiName)) hybridOutboxJndiName = eventHandlerJndi;
-            if (!hybridOutboxJndiName.equals(eventHandlerJndi)) {
-                throw new IdentityProvisioningException(
-                        "hybrid-outbox-jndi-name must match JVM property -Dstalwart.scim.hybrid.outbox.jndi.");
-            }
-            validateHybridClaimUri("stalwart.scim.hybrid.external-id-claim-uri",
-                    externalIdClaimUri, "http://wso2.org/claims/username");
-            validateHybridClaimUri("stalwart.scim.hybrid.given-name-claim-uri",
-                    givenNameClaimUri, "http://wso2.org/claims/givenname");
-            validateHybridClaimUri("stalwart.scim.hybrid.family-name-claim-uri",
-                    familyNameClaimUri, "http://wso2.org/claims/lastname");
-            validateHybridClaimUri("stalwart.scim.hybrid.display-name-claim-uri",
-                    displayNameClaimUri, "http://wso2.org/claims/displayname");
+        if ("HYBRID".equals(provisioningMode) && !enableProfileUpdates) {
+            throw new IdentityProvisioningException("HYBRID mode requires enable-profile-updates=true.");
         }
         if (bulkRequestTimeoutMs < 1000 || bulkRequestTimeoutMs > 120000) {
             throw new IdentityProvisioningException("bulk-request-timeout-ms must be between 1000 and 120000.");
@@ -237,46 +210,80 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
         if (bearerToken.indexOf('\r') >= 0 || bearerToken.indexOf('\n') >= 0) {
             throw new IdentityProvisioningException("Stalwart SCIM bearer token contains an invalid line break.");
         }
-        if ("HYBRID".equals(provisioningMode)) {
+        if ("HYBRID".equals(provisioningMode) || "BULK".equals(provisioningMode)) {
             try {
-                hybridProfileOutbox = HybridProfileOutbox.lookup(hybridOutboxJndiName);
-                registerHybridWorker();
+                hybridScopeId = buildOutboxScope(baseUrl, userStoreDomainName, bearerToken);
+                if ("BULK".equals(provisioningMode)) {
+                    scimOperationOutbox = ScimOperationOutbox.lookup(hybridOutboxJndiName);
+                    scimOperationScope = hybridScopeId;
+                    registerBulkWorker();
+                } else {
+                    hybridProfileOutbox = HybridProfileOutbox.lookup(hybridOutboxJndiName);
+                    registerHybridWorker();
+                }
             } catch (Exception e) {
                 throw new IdentityProvisioningException(
-                        "Unable to initialize the durable HYBRID profile outbox from JNDI resource "
+                        "Unable to initialize the durable Stalwart SCIM outbox using WSO2 Carbon DataSource "
                                 + hybridOutboxJndiName + ".", e);
             }
         }
     }
 
-    private void validateHybridClaimUri(String systemProperty, String connectorClaimUri, String defaultUri)
-            throws IdentityProvisioningException {
-        String eventClaimUri = System.getProperty(systemProperty, defaultUri);
-        if (!eventClaimUri.equals(connectorClaimUri)) {
-            throw new IdentityProvisioningException(
-                    "HYBRID event-handler claim URI mismatch for JVM property -" + systemProperty
-                            + "; it must match the outbound connection claim mapping.");
+    private String buildOutboxScope(String endpoint, String userStoreDomain, String token) {
+        String scopeMaterial = String.join("|", StringUtils.defaultString(endpoint),
+                StringUtils.defaultString(profileUpdateScimUrl),
+                StringUtils.defaultIfBlank(userStoreDomain, "PRIMARY"), StringUtils.defaultString(token));
+        try {
+            byte[] digest = java.security.MessageDigest.getInstance("SHA-256")
+                    .digest(scopeMaterial.getBytes(StandardCharsets.UTF_8));
+            StringBuilder scope = new StringBuilder("SCIM-");
+            for (byte value : digest) scope.append(String.format("%02x", value));
+            return scope.toString();
+        } catch (java.security.NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 is required for durable outbox scope isolation.", e);
         }
     }
 
     private void registerHybridWorker() {
         HYBRID_WORKERS.put(hybridScopeId, this);
-        if (HYBRID_SCHEDULER_STARTED.compareAndSet(false, true)) {
-            hybridScheduler = Executors.newSingleThreadScheduledExecutor(task -> {
-                Thread thread = new Thread(task, "stalwart-scim-hybrid-outbox");
-                thread.setDaemon(true);
-                return thread;
-            });
-            hybridScheduler.scheduleAtFixedRate(() -> {
-                for (StalwartSCIMProvisioningConnector worker : HYBRID_WORKERS.values()) {
-                    try {
-                        worker.flushHybridProfileOutbox();
-                    } catch (Throwable error) {
-                        log.error("Unexpected failure in HYBRID profile outbox scheduler.", error);
-                    }
-                }
-            }, 5, 5, TimeUnit.MINUTES);
+        // 2.0.4 connections may still carry the old scope property. Keep
+        // draining that scope so already-persisted profile updates are not lost.
+        if (StringUtils.isNotBlank(legacyHybridScopeId) && !legacyHybridScopeId.equals(hybridScopeId)) {
+            HYBRID_WORKERS.put(legacyHybridScopeId.trim(), this);
         }
+        startOutboxScheduler();
+    }
+
+    private void registerBulkWorker() {
+        BULK_WORKERS.put(scimOperationScope, this);
+        startOutboxScheduler();
+    }
+
+    private static void startOutboxScheduler() {
+        if (!HYBRID_SCHEDULER_STARTED.compareAndSet(false, true)) return;
+        hybridScheduler = Executors.newScheduledThreadPool(2, task -> {
+            Thread thread = new Thread(task, "stalwart-scim-durable-outbox");
+            thread.setDaemon(true);
+            return thread;
+        });
+        hybridScheduler.scheduleAtFixedRate(() -> {
+            for (Map.Entry<String, StalwartSCIMProvisioningConnector> workerEntry : HYBRID_WORKERS.entrySet()) {
+                try {
+                    workerEntry.getValue().flushHybridProfileOutbox(workerEntry.getKey());
+                } catch (Throwable error) {
+                    log.error("Unexpected failure in HYBRID profile outbox scheduler.", error);
+                }
+            }
+        }, 5, 5, TimeUnit.MINUTES);
+        hybridScheduler.scheduleWithFixedDelay(() -> {
+            for (StalwartSCIMProvisioningConnector worker : BULK_WORKERS.values()) {
+                try {
+                    worker.flushScimOperationOutbox();
+                } catch (Throwable error) {
+                    log.error("Unexpected failure in durable SCIM Bulk outbox scheduler.", error);
+                }
+            }
+        }, 5, 15, TimeUnit.SECONDS);
     }
 
     /**
@@ -290,21 +297,22 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
             scheduler.shutdownNow();
         }
         HYBRID_WORKERS.clear();
+        BULK_WORKERS.clear();
         HYBRID_SCHEDULER_STARTED.set(false);
     }
 
     private record HybridPatch(HybridProfileOutbox.Entry entry, String userId, String version) { }
 
-    private void flushHybridProfileOutbox() {
-        if (hybridProfileOutbox == null || StringUtils.isBlank(hybridScopeId)) return;
+    private void flushHybridProfileOutbox(String scope) {
+        if (hybridProfileOutbox == null || StringUtils.isBlank(scope)) return;
         String leaseOwner = java.util.UUID.randomUUID().toString();
         List<HybridProfileOutbox.Entry> claimed;
         try {
             // Keep the batch comfortably below Stalwart's 1000-operation and
             // 1 MiB limits even when every displayName is near its storage cap.
-            claimed = hybridProfileOutbox.claimBatch(hybridScopeId, 25, leaseOwner, 600_000L);
+            claimed = hybridProfileOutbox.claimBatch(scope, 25, leaseOwner, 600_000L);
         } catch (Exception e) {
-            log.error("Unable to claim durable HYBRID profile updates for scope " + hybridScopeId + ".", e);
+            log.error("Unable to claim durable HYBRID profile updates for scope " + scope + ".", e);
             return;
         }
         if (claimed.isEmpty()) return;
@@ -637,22 +645,31 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
                 }
             }
         }
-        if ("HYBRID".equals(provisioningMode)) {
-            // POST_SET_USER_CLAIMS is the authoritative source for a complete
-            // WSO2 profile snapshot and change-origin metadata. The separate
-            // event handler writes that snapshot to the durable outbox. Do not
-            // issue a second PATCH from this callback.
-            log.debug("HYBRID profile update deferred to the durable WSO2 event outbox.");
-        } else {
-            JsonObject patch = userPatch(attrs, enableProfileUpdates);
-            if (patch.getAsJsonArray("Operations").size() > 0) {
+        JsonObject profilePatch = userPatch(attrs, enableProfileUpdates, entity.getEntityName());
+        if (profilePatch.getAsJsonArray("Operations").size() > 0) {
+            if ("HYBRID".equals(provisioningMode)) {
+                String externalId = targetUserIdentifier(attrs, entity.getEntityName());
+                externalId = stripUserStoreDomain(externalId);
+                String displayName = profilePatch.getAsJsonArray("Operations").get(0)
+                        .getAsJsonObject().get("value").getAsString();
+                if (StringUtils.isBlank(externalId)) {
+                    throw new IdentityProvisioningException(
+                            "HYBRID profile update requires the immutable WSO2 externalId.");
+                }
+                try {
+                    hybridProfileOutbox.enqueue(hybridScopeId, externalId, displayName,
+                            "CONNECTOR_PROFILE_CLAIM_SNAPSHOT", 3);
+                } catch (SQLException e) {
+                    throw new IdentityProvisioningException(
+                            "Unable to persist the HYBRID profile update in WSO2CarbonDB.", e);
+                }
+            } else {
                 String id = findUserId(attrs, entity.getEntityName());
                 if (id != null) {
-                    // Profile claims are authoritative deltas from WSO2. Avoid a
-                    // read-before-write GET; SCIM replace operations are idempotent.
-                    requestAt(profileUpdateBaseUrl(), "PATCH", "/Users/" + pathSegment(id), patch);
+                    requestAt(profileUpdateBaseUrl(), "PATCH", "/Users/" + pathSegment(id), profilePatch);
                 } else {
-                    throw new IdentityProvisioningException("Stalwart user was not found for update; stable externalId lookup failed.");
+                    throw new IdentityProvisioningException(
+                            "Stalwart user was not found for update; stable externalId lookup failed.");
                 }
             }
         }
@@ -789,30 +806,40 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
         return user;
     }
 
-    private JsonObject userPatch(Map<ClaimMapping, List<String>> attrs, boolean includeProfile)
+    private JsonObject userPatch(Map<ClaimMapping, List<String>> attrs, boolean includeProfile, String entityName)
             throws IdentityProvisioningException {
         JsonArray operations = new JsonArray();
 
-        // userName and externalId are identity keys, not mutable profile fields.
-        // Never PATCH either one: changing userName changes the primary SMTP address.
+        // userName and externalId are immutable identity keys after creation.
+        // A name-part delta is resolved against the authoritative current WSO2
+        // UserStore snapshot; no Event Handler or JVM property is involved.
         String given = mappedValue(attrs, givenNameClaimUri);
         String family = mappedValue(attrs, familyNameClaimUri);
         String display = mappedValue(attrs, displayNameClaimUri);
-        // OR trigger semantics: either name part is a profile-change signal.
-        // When a name part is present, it takes precedence over a possibly stale
-        // displayName in the same partial event. Both current name parts are
-        // required here; the WSO2 event observer is responsible for verifying
-        // whether the event provides the changed-claim set and complete snapshot.
         if (includeProfile && (StringUtils.isNotBlank(given) || StringUtils.isNotBlank(family))) {
-            if (StringUtils.isNotBlank(given) && StringUtils.isNotBlank(family)) {
-                addReplace(operations, "displayName", joinName(given, family));
-            } else {
+            String lookupName = entityName;
+            if (StringUtils.isNotBlank(userStoreDomainName) && StringUtils.isNotBlank(lookupName)
+                    && lookupName.indexOf('/') < 0) {
+                lookupName = userStoreDomainName.trim() + "/" + lookupName.trim();
+            }
+            try {
+                Map<String, String> snapshot = Wso2UserClaimSnapshot.read(lookupName,
+                        new String[]{givenNameClaimUri, familyNameClaimUri});
+                if (!snapshot.containsKey(givenNameClaimUri) || !snapshot.containsKey(familyNameClaimUri)) {
+                    throw new IdentityProvisioningException(
+                            "The current WSO2 UserStore snapshot did not include both FIRSTNAME and LASTNAME claims.");
+                }
+                String currentGiven = snapshot.get(givenNameClaimUri);
+                String currentFamily = snapshot.get(familyNameClaimUri);
+                String composed = joinName(currentGiven, currentFamily);
+                if (StringUtils.isNotBlank(composed)) addReplace(operations, "displayName", composed);
+            } catch (IdentityProvisioningException e) {
+                throw e;
+            } catch (Exception e) {
                 throw new IdentityProvisioningException(
-                        "FIRSTNAME or LASTNAME changed, but the complete current name snapshot is unavailable. "
-                                + "A stale displayName was not used; the profile update must be reconciled from WSO2.");
+                        "Unable to read the complete current FIRSTNAME/LASTNAME snapshot from WSO2 UserStore.", e);
             }
         } else if (includeProfile && StringUtils.isNotBlank(display)) {
-            // DISPLAYNAME-only changes use the explicit current displayName claim.
             addReplace(operations, "displayName", display.trim());
         }
 
@@ -991,46 +1018,135 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
 
     private JsonObject requestAt(String endpointBaseUrl, String method, String path, JsonObject body)
             throws IdentityProvisioningException {
-        if ("BULK".equals(provisioningMode) && !bulkUnsupportedEndpoints.containsKey(endpointBaseUrl)
-                && !"GET".equalsIgnoreCase(method)) {
+        if ("BULK".equals(provisioningMode) && !"GET".equalsIgnoreCase(method)) {
             return requestBulkAt(endpointBaseUrl, method, path, body);
         }
         return requestAtIndividual(endpointBaseUrl, method, path, body);
     }
 
     /**
-     * Executes one synchronous WSO2 mutation through SCIM Bulk. WSO2's outbound
-     * connector API supplies one entity event at a time and has no reliable
-     * end-of-import callback; therefore this implementation deliberately does
-     * not keep a background queue or acknowledge unflushed work.
+     * Enqueue first, then attempt delivery. A committed row remains durable if
+     * WSO2 or the host stops between enqueue and Stalwart acknowledgement.
      */
     private JsonObject requestBulkAt(String endpointBaseUrl, String method, String path, JsonObject data)
             throws IdentityProvisioningException {
-        JsonObject operation = new JsonObject();
-        operation.addProperty("method", method.toUpperCase(java.util.Locale.ROOT));
-        operation.addProperty("path", path);
-        // Stalwart validates bulkId for POST operations even when the operation
-        // is independent and no bulkId reference is used by another operation.
-        if ("POST".equalsIgnoreCase(method)) {
-            operation.addProperty("bulkId", java.util.UUID.randomUUID().toString());
+        if (scimOperationOutbox == null || StringUtils.isBlank(scimOperationScope)) {
+            throw new IdentityProvisioningException(
+                    "Durable SCIM Bulk outbox is not initialized; refusing an unjournaled Bulk mutation.");
         }
-        if (data != null) operation.add("data", data);
+        final String operationId;
+        try {
+            operationId = scimOperationOutbox.enqueue(scimOperationScope, endpointBaseUrl, method, path,
+                    data == null ? null : data.toString());
+        } catch (SQLException e) {
+            throw new IdentityProvisioningException(
+                    "Unable to persist the SCIM Bulk operation in WSO2CarbonDB; no Stalwart request was sent.", e);
+        }
 
+        // Low-latency path: try to drain this row immediately. If Stalwart is
+        // unavailable, the durable worker will retry it after restart/recovery.
+        flushScimOperationOutbox();
+        long deadline = System.currentTimeMillis() + bulkRequestTimeoutMs;
+        while (System.currentTimeMillis() < deadline) {
+            try {
+                ScimOperationOutbox.Result result = scimOperationOutbox.getResult(operationId);
+                if (result == null) {
+                    throw new IdentityProvisioningException("Durable Bulk operation disappeared from its outbox.");
+                }
+                if ("SENT".equals(result.status())) {
+                    return StringUtils.isBlank(result.responseJson()) ? new JsonObject()
+                            : JsonParser.parseString(result.responseJson()).getAsJsonObject();
+                }
+                if ("DEAD".equals(result.status())) {
+                    throw new IdentityProvisioningException(
+                            "Durable SCIM Bulk operation entered DEAD state: " + abbreviate(result.lastError()));
+                }
+                Thread.sleep(100L);
+            } catch (SQLException e) {
+                throw new IdentityProvisioningException("Unable to read the durable SCIM Bulk operation result.", e);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new IdentityProvisioningException(
+                        "Interrupted while waiting for the durable SCIM Bulk operation; it remains queued.", e);
+            } catch (JsonParseException | IllegalStateException e) {
+                throw new IdentityProvisioningException("Invalid response saved for a durable SCIM Bulk operation.", e);
+            }
+        }
+        throw new IdentityProvisioningException(
+                "SCIM Bulk operation was durably queued but Stalwart has not acknowledged it yet. "
+                        + "The WSO2 outbox worker will continue delivery; operationId=" + operationId);
+    }
+
+    private void flushScimOperationOutbox() {
+        if (scimOperationOutbox == null || StringUtils.isBlank(scimOperationScope)) return;
+        synchronized (scimOutboxFlushLock) {
+            String leaseOwner = java.util.UUID.randomUUID().toString();
+            List<ScimOperationOutbox.Entry> claimed;
+            try {
+                scimOperationOutbox.purgeSent(30);
+                claimed = scimOperationOutbox.claimBatch(scimOperationScope, 25, leaseOwner, 180_000L);
+            } catch (Exception e) {
+                log.error("Unable to claim durable SCIM Bulk operations.", e);
+                return;
+            }
+            if (claimed.isEmpty()) return;
+            Map<String, List<ScimOperationOutbox.Entry>> byEndpoint = new java.util.LinkedHashMap<>();
+            for (ScimOperationOutbox.Entry entry : claimed) {
+                byEndpoint.computeIfAbsent(entry.endpoint(), ignored -> new ArrayList<>()).add(entry);
+            }
+            for (Map.Entry<String, List<ScimOperationOutbox.Entry>> group : byEndpoint.entrySet()) {
+                sendDurableBulkBatch(group.getKey(), group.getValue());
+            }
+        }
+    }
+
+    private void sendDurableBulkBatch(String endpoint, List<ScimOperationOutbox.Entry> entries) {
+        if (bulkUnsupportedEndpoints.containsKey(endpoint)) {
+            sendDurableIndividualFallback(endpoint, entries);
+            return;
+        }
         JsonArray operations = new JsonArray();
-        operations.add(operation);
-        JsonObject bulkRequest = new JsonObject();
+        List<JsonObject> bodies = new ArrayList<>();
+        try {
+            for (ScimOperationOutbox.Entry entry : entries) {
+                JsonObject operation = new JsonObject();
+                operation.addProperty("method", entry.method());
+                operation.addProperty("path", entry.path());
+                if ("POST".equalsIgnoreCase(entry.method())) {
+                    operation.addProperty("bulkId", java.util.UUID.randomUUID().toString());
+                }
+                JsonObject body = StringUtils.isBlank(entry.dataJson()) ? null
+                        : JsonParser.parseString(entry.dataJson()).getAsJsonObject();
+                bodies.add(body);
+                if (body != null) operation.add("data", body);
+                operations.add(operation);
+            }
+        } catch (RuntimeException e) {
+            for (ScimOperationOutbox.Entry entry : entries) {
+                markBulkDead(entry, "Persisted SCIM operation payload is invalid: " + e);
+            }
+            return;
+        }
+
+        JsonObject envelope = new JsonObject();
         JsonArray schemas = new JsonArray();
         schemas.add("urn:ietf:params:scim:api:messages:2.0:BulkRequest");
-        bulkRequest.add("schemas", schemas);
-        bulkRequest.add("Operations", operations);
-
-        String payload = bulkRequest.toString();
+        envelope.add("schemas", schemas);
+        envelope.add("Operations", operations);
+        String payload = envelope.toString();
         if (payload.getBytes(StandardCharsets.UTF_8).length > bulkMaxPayloadBytes) {
-            throw new IdentityProvisioningException("SCIM Bulk request exceeds bulk-max-payload-bytes; no request was sent.");
+            if (entries.size() == 1) {
+                markBulkDead(entries.get(0), "A single durable Bulk operation exceeds bulk-max-payload-bytes.");
+                return;
+            }
+            int middle = entries.size() / 2;
+            sendDurableBulkBatch(endpoint, entries.subList(0, middle));
+            sendDurableBulkBatch(endpoint, entries.subList(middle, entries.size()));
+            return;
         }
 
         HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create(endpointBaseUrl + "/Bulk"))
+                .uri(URI.create(endpoint + "/Bulk"))
                 .timeout(Duration.ofMillis(bulkRequestTimeoutMs))
                 .header("Authorization", "Bearer " + bearerToken)
                 .header("Accept", "application/scim+json")
@@ -1041,71 +1157,157 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
             HttpResponse<String> response = sendWithLimit(request);
             int httpStatus = response.statusCode();
             if ((httpStatus == 404 || httpStatus == 405 || httpStatus == 501) && bulkFallbackToIndividual) {
-                // These statuses indicate that the Bulk endpoint is unavailable.
-                // Only this definitive response permits safe fallback.
-                bulkUnsupportedEndpoints.put(endpointBaseUrl, Boolean.TRUE);
-                log.warn("Stalwart SCIM Bulk endpoint is unavailable (HTTP " + httpStatus
-                        + "); switching this connector instance to Individual mode.");
-                return requestAtIndividual(endpointBaseUrl, method, path, data);
+                bulkUnsupportedEndpoints.put(endpoint, Boolean.TRUE);
+                log.warn("SCIM Bulk endpoint unavailable; delivering durable queued operations individually.");
+                sendDurableIndividualFallback(endpoint, entries);
+                return;
             }
             if (httpStatus < 200 || httpStatus >= 300) {
-                throw new IdentityProvisioningException("Stalwart SCIM Bulk request failed with HTTP "
-                        + httpStatus + ": " + abbreviate(response.body()));
+                for (ScimOperationOutbox.Entry entry : entries) {
+                    markBulkRetry(entry, "Stalwart Bulk endpoint returned HTTP " + httpStatus + ": "
+                            + abbreviate(response.body()));
+                }
+                return;
             }
             JsonObject bulkResponse = StringUtils.isBlank(response.body())
                     ? new JsonObject() : JsonParser.parseString(response.body()).getAsJsonObject();
             JsonArray results = bulkResponse.has("Operations") && bulkResponse.get("Operations").isJsonArray()
                     ? bulkResponse.getAsJsonArray("Operations") : new JsonArray();
-            if (results.size() != 1 || !results.get(0).isJsonObject()) {
-                throw new IdentityProvisioningException("Stalwart SCIM Bulk response must contain exactly one operation result.");
+            if (results.size() != entries.size()) {
+                for (ScimOperationOutbox.Entry entry : entries) {
+                    markBulkRetry(entry, "Bulk response count did not match the submitted durable operation batch.");
+                }
+                return;
             }
-            JsonObject result = results.get(0).getAsJsonObject();
-            String statusText = result.has("status") ? result.get("status").getAsString() : "";
-            int operationStatus;
-            try {
-                operationStatus = Integer.parseInt(statusText);
-            } catch (NumberFormatException e) {
-                throw new IdentityProvisioningException("Stalwart SCIM Bulk response contains a missing or invalid operation status.");
-            }
-            if (operationStatus < 200 || operationStatus >= 300) {
-                if (operationStatus == 404 && "DELETE".equalsIgnoreCase(method)) return new JsonObject();
-                if (operationStatus == 409 && "POST".equalsIgnoreCase(method)
-                        && postResourceNowExists(path, data)) return new JsonObject();
-                JsonElement detail = result.has("response") ? result.get("response") : result;
-                throw new IdentityProvisioningException("Stalwart SCIM Bulk operation " + method + " "
-                        + path + " failed with status " + operationStatus + ": " + abbreviate(detail.toString()));
-            }
-            JsonObject resource = result.has("response") && result.get("response").isJsonObject()
-                    ? result.getAsJsonObject("response") : new JsonObject();
-            if ("POST".equalsIgnoreCase(method) && resource.has("id") && data != null) {
-                String resourceType = "/Users".equals(path) ? "Users" : "/Groups".equals(path) ? "Groups" : null;
-                if (resourceType != null) {
-                    String attribute = "Users".equals(resourceType) ? "userName" : "displayName";
-                    if (data.has(attribute)) {
-                        cacheResourceId(resourceType, attribute, data.get(attribute).getAsString(),
-                                resource.get("id").getAsString());
+            for (int i = 0; i < entries.size(); i++) {
+                ScimOperationOutbox.Entry entry = entries.get(i);
+                JsonObject operationResult = results.get(i).getAsJsonObject();
+                int status = parseBulkOperationStatus(operationResult);
+                if (status >= 200 && status < 300) {
+                    JsonObject resource = operationResult.has("response")
+                            && operationResult.get("response").isJsonObject()
+                            ? operationResult.getAsJsonObject("response") : new JsonObject();
+                    cacheCreatedResource(entry, bodies.get(i), resource);
+                    markBulkSent(entry, resource);
+                } else if (status == 404 && "DELETE".equalsIgnoreCase(entry.method())) {
+                    markBulkSent(entry, new JsonObject());
+                } else if (status == 409 && "POST".equalsIgnoreCase(entry.method())) {
+                    try {
+                        if (reconcileQueuedPost(entry, bodies.get(i))) {
+                            // A prior attempt may have committed the create before its
+                            // response was lost. Reconcile only by immutable externalId.
+                            markBulkSent(entry, resolveCreatedResource(entry, bodies.get(i)));
+                        } else {
+                            markBulkDead(entry, "Stalwart rejected the queued POST with HTTP 409 and no matching resource was found.");
+                        }
+                    } catch (IdentityProvisioningException e) {
+                        markBulkDead(entry, "Stalwart userName conflict does not match the immutable externalId: " + e);
                     }
-                    if ("Users".equals(resourceType) && data.has("externalId")) {
-                        cacheResourceId("Users", "externalId", data.get("externalId").getAsString(),
-                                resource.get("id").getAsString());
+                } else if (status >= 400 && status < 500 && status != 408 && status != 429) {
+                    markBulkDead(entry, "Stalwart Bulk operation failed with HTTP " + status + ": "
+                            + abbreviate(operationResult.toString()));
+                } else {
+                    markBulkRetry(entry, "Stalwart Bulk operation failed with HTTP " + status + ": "
+                            + abbreviate(operationResult.toString()));
+                }
+            }
+        } catch (IOException e) {
+            // Do not discard uncertain work. POST replay is reconciled by immutable
+            // externalId on the next attempt; PATCH/DELETE operations are idempotent.
+            for (ScimOperationOutbox.Entry entry : entries) {
+                if ("POST".equalsIgnoreCase(entry.method())) {
+                    try {
+                        if (reconcileQueuedPost(entry, bodies.get(entries.indexOf(entry)))) {
+                            markBulkSent(entry, resolveCreatedResource(entry, bodies.get(entries.indexOf(entry))));
+                            continue;
+                        }
+                    } catch (Exception reconcileError) {
+                        markBulkRetry(entry, "Ambiguous Bulk I/O result; POST reconciliation failed: " + reconcileError);
+                        continue;
+                    }
+                }
+                markBulkRetry(entry, "Ambiguous Bulk I/O result; durable retry scheduled: " + e);
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            for (ScimOperationOutbox.Entry entry : entries) {
+                markBulkRetry(entry, "Bulk delivery interrupted; durable retry scheduled.");
+            }
+        } catch (RuntimeException e) {
+            for (ScimOperationOutbox.Entry entry : entries) {
+                markBulkRetry(entry, "Invalid Bulk response; durable retry scheduled: " + e);
+            }
+        }
+    }
+
+    private void sendDurableIndividualFallback(String endpoint, List<ScimOperationOutbox.Entry> entries) {
+        for (ScimOperationOutbox.Entry entry : entries) {
+            try {
+                JsonObject body = StringUtils.isBlank(entry.dataJson()) ? null
+                        : JsonParser.parseString(entry.dataJson()).getAsJsonObject();
+                JsonObject result = requestAtIndividual(endpoint, entry.method(), entry.path(), body);
+                markBulkSent(entry, result);
+            } catch (Exception e) {
+                markBulkRetry(entry, "Individual fallback failed: " + e);
+            }
+        }
+    }
+
+    private boolean reconcileQueuedPost(ScimOperationOutbox.Entry entry, JsonObject body)
+            throws IdentityProvisioningException {
+        return body != null && "/Users".equals(entry.path()) && postResourceNowExists(entry.path(), body);
+    }
+
+    private JsonObject resolveCreatedResource(ScimOperationOutbox.Entry entry, JsonObject body)
+            throws IdentityProvisioningException {
+        if (body != null && "/Users".equals(entry.path()) && body.has("externalId")) {
+            String id = findResourceId("Users", "externalId", body.get("externalId").getAsString());
+            if (id != null) return requestAtIndividual(entry.endpoint(), "GET", "/Users/" + pathSegment(id), null);
+        }
+        return new JsonObject();
+    }
+
+    private void cacheCreatedResource(ScimOperationOutbox.Entry entry, JsonObject body, JsonObject resource) {
+        if (body == null || resource == null || !resource.has("id")) return;
+        String id = resource.get("id").getAsString();
+        if ("/Users".equals(entry.path())) {
+            if (body.has("userName")) cacheResourceId("Users", "userName", body.get("userName").getAsString(), id);
+            if (body.has("externalId")) cacheResourceId("Users", "externalId", body.get("externalId").getAsString(), id);
+        } else if ("/Groups".equals(entry.path()) && body.has("displayName")) {
+            cacheResourceId("Groups", "displayName", body.get("displayName").getAsString(), id);
+        }
+    }
+
+    private void markBulkSent(ScimOperationOutbox.Entry entry, JsonObject response) {
+        try {
+            JsonObject compact = new JsonObject();
+            if (response != null) {
+                for (String attribute : List.of("id", "userName", "externalId", "displayName")) {
+                    if (response.has(attribute) && !response.get(attribute).isJsonNull()) {
+                        compact.add(attribute, response.get(attribute));
                     }
                 }
             }
-            return resource;
-        } catch (IOException e) {
-            // Bulk is not blindly retried: the server may have committed the
-            // operation while its response was lost. Reconcile POST by externalId.
-            if ("POST".equalsIgnoreCase(method) && postResourceNowExists(path, data)) {
-                log.info("SCIM Bulk POST reconciled after an ambiguous I/O failure.");
-                return new JsonObject();
-            }
-            throw new IdentityProvisioningException("I/O failure during SCIM Bulk "
-                    + method + " " + path + "; outcome may be unknown and automatic replay was prevented.", e);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new IdentityProvisioningException("Interrupted while calling Stalwart SCIM Bulk endpoint.", e);
-        } catch (JsonParseException | IllegalStateException | IllegalArgumentException e) {
-            throw new IdentityProvisioningException("Invalid Stalwart SCIM Bulk response or endpoint.", e);
+            scimOperationOutbox.markSent(entry.id(), entry.leaseOwner(),
+                    compact.size() == 0 ? null : compact.toString());
+        } catch (SQLException e) {
+            log.error("Unable to acknowledge durable SCIM operation " + entry.id() + ".", e);
+        }
+    }
+
+    private void markBulkRetry(ScimOperationOutbox.Entry entry, String error) {
+        try {
+            scimOperationOutbox.markRetry(entry, error, 20);
+        } catch (SQLException e) {
+            log.error("Unable to persist retry state for durable SCIM operation " + entry.id() + ".", e);
+        }
+    }
+
+    private void markBulkDead(ScimOperationOutbox.Entry entry, String error) {
+        try {
+            scimOperationOutbox.markDead(entry, error);
+        } catch (SQLException e) {
+            log.error("Unable to mark durable SCIM operation " + entry.id() + " as DEAD.", e);
         }
     }
 

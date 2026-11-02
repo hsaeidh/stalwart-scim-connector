@@ -40,8 +40,8 @@ public final class StalwartSCIMFactorySmokeTest {
         }
 
         List<Property> properties = factory.getConfigurationProperties();
-        if (properties == null || properties.size() != 21) {
-            throw new IllegalStateException("Expected 21 configuration properties, got: "
+        if (properties == null || properties.size() != 19) {
+            throw new IllegalStateException("Expected 19 configuration properties, got: "
                     + (properties == null ? "null" : properties.size()));
         }
 
@@ -74,9 +74,7 @@ public final class StalwartSCIMFactorySmokeTest {
                 StalwartSCIMProvisioningConnectorConstants.PROVISIONING_MODE,
                 StalwartSCIMProvisioningConnectorConstants.BULK_FALLBACK_TO_INDIVIDUAL,
                 StalwartSCIMProvisioningConnectorConstants.BULK_REQUEST_TIMEOUT_MS,
-                StalwartSCIMProvisioningConnectorConstants.BULK_MAX_PAYLOAD_BYTES,
-                StalwartSCIMProvisioningConnectorConstants.HYBRID_OUTBOX_JNDI_NAME,
-                StalwartSCIMProvisioningConnectorConstants.HYBRID_SCOPE_ID
+                StalwartSCIMProvisioningConnectorConstants.BULK_MAX_PAYLOAD_BYTES
         };
         for (String name : expectedNames) {
             if (!byName.containsKey(name)) {
@@ -106,25 +104,15 @@ public final class StalwartSCIMFactorySmokeTest {
         assertDefault(byName, StalwartSCIMProvisioningConnectorConstants.BULK_FALLBACK_TO_INDIVIDUAL, "true");
         assertDefault(byName, StalwartSCIMProvisioningConnectorConstants.BULK_REQUEST_TIMEOUT_MS, "30000");
         assertDefault(byName, StalwartSCIMProvisioningConnectorConstants.BULK_MAX_PAYLOAD_BYTES, "900000");
-        assertDefault(byName, StalwartSCIMProvisioningConnectorConstants.HYBRID_OUTBOX_JNDI_NAME,
-                "jdbc/WSO2CarbonDB");
-        assertDefault(byName, StalwartSCIMProvisioningConnectorConstants.HYBRID_SCOPE_ID, "");
+        // Outbox settings are intentionally absent from the UI: the connector
+        // uses WSO2's standard jdbc/WSO2CarbonDB datasource automatically.
 
-        // Verify the new mode can be initialized without changing the OSGi factory contract.
         Property baseUrl = new Property();
         baseUrl.setName(StalwartSCIMProvisioningConnectorConstants.BASE_URL);
         baseUrl.setValue("https://mail.example.com/scim/v2");
         Property token = new Property();
         token.setName(StalwartSCIMProvisioningConnectorConstants.BEARER_TOKEN);
         token.setValue("smoke-test-token");
-        Property mode = new Property();
-        mode.setName(StalwartSCIMProvisioningConnectorConstants.PROVISIONING_MODE);
-        mode.setValue("BULK");
-        try {
-            new StalwartSCIMProvisioningConnector().init(new Property[]{baseUrl, token, mode});
-        } catch (org.wso2.carbon.identity.provisioning.IdentityProvisioningException e) {
-            throw new IllegalStateException("Valid BULK configuration was rejected.", e);
-        }
 
         Property invalidMode = new Property();
         invalidMode.setName(StalwartSCIMProvisioningConnectorConstants.PROVISIONING_MODE);
@@ -143,6 +131,8 @@ public final class StalwartSCIMFactorySmokeTest {
         assertStableEntityNameReconciliationWithoutEmailClaim();
         assertUsernameCollisionReconcilesOnlySameExternalId();
         assertDurableOutboxCoalescingAndLease();
+        assertDurableBulkOutboxSurvivesReopen();
+        assertDurableBulkOutboxBatchesMultipleOperations();
         assertHybridSchedulerSendsMultiOperationBulkPatch();
         assertIdentityAndEmailOnlyUpdatesAreIgnored();
         assertConnectorDescriptionsAreEnglish(properties);
@@ -150,7 +140,7 @@ public final class StalwartSCIMFactorySmokeTest {
         System.out.println("Connector type: " + factory.getConnectorType());
         System.out.println("Properties count: " + properties.size());
         System.out.println("Required claim mapping defaults: emailaddress -> userName, username -> externalId");
-        System.out.println("SMOKE TEST PASSED v2.0.4");
+        System.out.println("SMOKE TEST PASSED v2.0.5");
     }
 
     private static void assertBulkTransportRequest() {
@@ -194,7 +184,16 @@ public final class StalwartSCIMFactorySmokeTest {
             mode.setName(StalwartSCIMProvisioningConnectorConstants.PROVISIONING_MODE);
             mode.setValue("BULK");
             StalwartSCIMProvisioningConnector connector = new StalwartSCIMProvisioningConnector();
-            connector.init(new Property[]{baseUrl, token, mode});
+            JdbcDataSource dataSource = new JdbcDataSource();
+            dataSource.setURL("jdbc:h2:mem:stalwart_bulk_transport;DB_CLOSE_DELAY=-1");
+            setField(connector, "baseUrl", base);
+            setField(connector, "bearerToken", "smoke-test-token");
+            setField(connector, "provisioningMode", "BULK");
+            setField(connector, "bulkRequestTimeoutMs", 30000);
+            setField(connector, "bulkMaxPayloadBytes", 900000);
+            setField(connector, "bulkFallbackToIndividual", true);
+            setField(connector, "scimOperationOutbox", new ScimOperationOutbox(dataSource));
+            setField(connector, "scimOperationScope", "smoke-scope");
 
             JsonObject user = new JsonObject();
             user.addProperty("userName", "bulk-smoke@example.com");
@@ -427,6 +426,112 @@ public final class StalwartSCIMFactorySmokeTest {
         }
     }
 
+    private static void assertDurableBulkOutboxSurvivesReopen() {
+        try {
+            String jdbcUrl = "jdbc:h2:file:./target/stalwart-bulk-restart-smoke;DB_CLOSE_ON_EXIT=FALSE";
+            JdbcDataSource firstDataSource = new JdbcDataSource();
+            firstDataSource.setURL(jdbcUrl);
+            ScimOperationOutbox firstProcess = new ScimOperationOutbox(firstDataSource);
+            JsonObject patch = new JsonObject();
+            patch.addProperty("marker", "persisted-before-network");
+            String id = firstProcess.enqueue("restart-scope", "https://mail.example.com/scim/v2",
+                    "PATCH", "/Users/user-1", patch.toString());
+
+            // Close the embedded database and reopen the same file, simulating
+            // the persistence boundary across a WSO2 process restart.
+            try (java.sql.Connection connection = firstDataSource.getConnection();
+                 java.sql.Statement statement = connection.createStatement()) {
+                statement.execute("SHUTDOWN");
+            }
+            JdbcDataSource restartedDataSource = new JdbcDataSource();
+            restartedDataSource.setURL(jdbcUrl);
+            ScimOperationOutbox restartedProcess = new ScimOperationOutbox(restartedDataSource);
+            List<ScimOperationOutbox.Entry> recovered = restartedProcess.claimBatch(
+                    "restart-scope", 10, "restarted-node", 60_000L);
+            if (recovered.size() != 1 || !id.equals(recovered.get(0).id())
+                    || !"PATCH".equals(recovered.get(0).method())
+                    || !"/Users/user-1".equals(recovered.get(0).path())
+                    || !patch.toString().equals(recovered.get(0).dataJson())) {
+                throw new IllegalStateException("A committed Bulk operation was not recovered after outbox re-open.");
+            }
+            restartedProcess.markSent(id, "restarted-node", null);
+            if (!"SENT".equals(restartedProcess.getResult(id).status())) {
+                throw new IllegalStateException("Recovered Bulk operation was not acknowledged.");
+            }
+        } catch (Exception e) {
+            throw new IllegalStateException("Durable Bulk outbox restart smoke test failed.", e);
+        }
+    }
+
+    private static void assertDurableBulkOutboxBatchesMultipleOperations() {
+        HttpServer server = null;
+        try {
+            JdbcDataSource dataSource = new JdbcDataSource();
+            dataSource.setURL("jdbc:h2:mem:stalwart_bulk_batch;DB_CLOSE_DELAY=-1");
+            ScimOperationOutbox outbox = new ScimOperationOutbox(dataSource);
+            JsonObject patchOne = new JsonObject();
+            patchOne.addProperty("schemas", "urn:ietf:params:scim:api:messages:2.0:PatchOp");
+            JsonObject patchTwo = new JsonObject();
+            patchTwo.addProperty("schemas", "urn:ietf:params:scim:api:messages:2.0:PatchOp");
+
+            AtomicReference<String> payload = new AtomicReference<>();
+            AtomicInteger requestCount = new AtomicInteger();
+            server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+            server.createContext("/scim/v2/Bulk", exchange -> {
+                requestCount.incrementAndGet();
+                payload.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+                JsonObject response = new JsonObject();
+                com.google.gson.JsonArray results = new com.google.gson.JsonArray();
+                for (int i = 0; i < 2; i++) {
+                    JsonObject result = new JsonObject();
+                    result.addProperty("status", "204");
+                    results.add(result);
+                }
+                response.add("Operations", results);
+                byte[] bytes = response.toString().getBytes(StandardCharsets.UTF_8);
+                exchange.getResponseHeaders().set("Content-Type", "application/scim+json");
+                exchange.sendResponseHeaders(200, bytes.length);
+                try (var output = exchange.getResponseBody()) { output.write(bytes); }
+            });
+            server.start();
+
+            String endpoint = "http://127.0.0.1:" + server.getAddress().getPort() + "/scim/v2";
+            ScimOperationOutbox activeOutbox = new ScimOperationOutbox(dataSource);
+            String activeScope = "active-bulk-batch-scope";
+            String activeOne = activeOutbox.enqueue(activeScope, endpoint, "PATCH", "/Users/user-1",
+                    patchOne.toString());
+            String activeTwo = activeOutbox.enqueue(activeScope, endpoint, "PATCH", "/Users/user-2",
+                    patchTwo.toString());
+
+            StalwartSCIMProvisioningConnector connector = new StalwartSCIMProvisioningConnector();
+            setField(connector, "baseUrl", endpoint);
+            setField(connector, "bearerToken", "smoke-test-token");
+            setField(connector, "provisioningMode", "BULK");
+            setField(connector, "scimOperationOutbox", activeOutbox);
+            setField(connector, "scimOperationScope", activeScope);
+            setField(connector, "bulkRequestTimeoutMs", 30000);
+            setField(connector, "bulkMaxPayloadBytes", 900000);
+            setField(connector, "bulkFallbackToIndividual", true);
+
+            Method flush = StalwartSCIMProvisioningConnector.class.getDeclaredMethod("flushScimOperationOutbox");
+            flush.setAccessible(true);
+            flush.invoke(connector);
+
+            JsonObject sent = JsonParser.parseString(payload.get()).getAsJsonObject();
+            if (requestCount.get() != 1 || sent.getAsJsonArray("Operations").size() != 2) {
+                throw new IllegalStateException("Pending durable operations were not combined into one Bulk request.");
+            }
+            if (!"SENT".equals(activeOutbox.getResult(activeOne).status())
+                    || !"SENT".equals(activeOutbox.getResult(activeTwo).status())) {
+                throw new IllegalStateException("Bulk operation results were not acknowledged individually.");
+            }
+        } catch (Exception e) {
+            throw new IllegalStateException("Durable multi-operation Bulk batching smoke test failed.", e);
+        } finally {
+            if (server != null) server.stop(0);
+        }
+    }
+
     private static void assertHybridSchedulerSendsMultiOperationBulkPatch() {
         HttpServer server = null;
         try {
@@ -511,9 +616,9 @@ public final class StalwartSCIMFactorySmokeTest {
             setField(connector, "bulkMaxPayloadBytes", 900000);
             setField(connector, "bulkFallbackToIndividual", true);
 
-            Method flush = StalwartSCIMProvisioningConnector.class.getDeclaredMethod("flushHybridProfileOutbox");
+            Method flush = StalwartSCIMProvisioningConnector.class.getDeclaredMethod("flushHybridProfileOutbox", String.class);
             flush.setAccessible(true);
-            flush.invoke(connector);
+            flush.invoke(connector, scope);
 
             if (bulkCount.get() != 1 || bulkPayload.get() == null) {
                 throw new IllegalStateException("HYBRID scheduler did not send one Bulk request.");
