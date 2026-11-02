@@ -73,7 +73,7 @@ Bundle-Name: Stalwart SCIM WSO2 Profile Event Observer
 Bundle-ActivationPolicy: lazy
 -dsannotations: *
 -dsannotations-options: inherit
-Import-Package: org.wso2.carbon.identity.event;version="[7.10,8)",org.wso2.carbon.identity.event.event;version="[7.10,8)",org.wso2.carbon.identity.event.handler;version="[7.10,8)",org.wso2.carbon.identity.core.bean.context;version="[7.10,8)",*
+Import-Package: org.stalwart.identity.provisioning.connector.scim;version="[2.0.3,3)",org.wso2.carbon.identity.event;version="[7.10,8)",org.wso2.carbon.identity.event.event;version="[7.10,8)",org.wso2.carbon.identity.event.handler;version="[7.10,8)",org.wso2.carbon.identity.core.bean.context;version="[7.10,8)",*
           ]]></bnd>
         </configuration>
       </plugin>
