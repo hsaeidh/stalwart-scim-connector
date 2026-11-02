@@ -38,6 +38,10 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.Semaphore;
 
 /**
@@ -58,6 +62,10 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
     private static final long CACHE_TTL_MILLIS = Duration.ofMinutes(5).toMillis();
     private static final ConcurrentMap<String, CacheEntry> RESOURCE_ID_CACHE = new ConcurrentHashMap<>();
     private static final AtomicInteger CACHE_INSERTIONS = new AtomicInteger();
+    private static final ConcurrentMap<String, StalwartSCIMProvisioningConnector> HYBRID_WORKERS =
+            new ConcurrentHashMap<>();
+    private static final AtomicBoolean HYBRID_SCHEDULER_STARTED = new AtomicBoolean(false);
+    private static volatile ScheduledExecutorService hybridScheduler;
     private static final class CacheEntry {
         private final String id;
         private final long expiresAt;
@@ -88,6 +96,9 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
     private boolean bulkFallbackToIndividual = true;
     private int bulkRequestTimeoutMs = 30000;
     private int bulkMaxPayloadBytes = 900000;
+    private String hybridOutboxJndiName = HybridProfileOutbox.DEFAULT_JNDI_NAME;
+    private String hybridScopeId;
+    private HybridProfileOutbox hybridProfileOutbox;
     private final ConcurrentMap<String, Boolean> bulkUnsupportedEndpoints = new ConcurrentHashMap<>();
 
     @Override
@@ -131,12 +142,29 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
                             bulkRequestTimeoutMs = parseIntegerProperty(value, "bulk-request-timeout-ms");
                     case StalwartSCIMProvisioningConnectorConstants.BULK_MAX_PAYLOAD_BYTES ->
                             bulkMaxPayloadBytes = parseIntegerProperty(value, "bulk-max-payload-bytes");
+                    case StalwartSCIMProvisioningConnectorConstants.HYBRID_OUTBOX_JNDI_NAME ->
+                            hybridOutboxJndiName = value;
+                    case StalwartSCIMProvisioningConnectorConstants.HYBRID_SCOPE_ID ->
+                            hybridScopeId = value;
                     default -> log.debug("Ignoring unsupported Stalwart connector property: " + property.getName());
                 }
             }
         }
-        if (!"INDIVIDUAL".equals(provisioningMode) && !"BULK".equals(provisioningMode)) {
-            throw new IdentityProvisioningException("provisioning-mode must be INDIVIDUAL or BULK.");
+        if (!"INDIVIDUAL".equals(provisioningMode) && !"BULK".equals(provisioningMode)
+                && !"HYBRID".equals(provisioningMode)) {
+            throw new IdentityProvisioningException("provisioning-mode must be INDIVIDUAL, BULK or HYBRID.");
+        }
+        if ("HYBRID".equals(provisioningMode)) {
+            if (!enableProfileUpdates) {
+                throw new IdentityProvisioningException("HYBRID mode requires enable-profile-updates=true.");
+            }
+            if (StringUtils.isBlank(hybridScopeId)) {
+                throw new IdentityProvisioningException(
+                        "hybrid-scope-id is required in HYBRID mode and must match tenantDomain|userStoreDomain.");
+            }
+            if (StringUtils.isBlank(hybridOutboxJndiName)) {
+                hybridOutboxJndiName = HybridProfileOutbox.DEFAULT_JNDI_NAME;
+            }
         }
         if (bulkRequestTimeoutMs < 1000 || bulkRequestTimeoutMs > 120000) {
             throw new IdentityProvisioningException("bulk-request-timeout-ms must be between 1000 and 120000.");
@@ -182,6 +210,16 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
         }
         if (bearerToken.indexOf('\r') >= 0 || bearerToken.indexOf('\n') >= 0) {
             throw new IdentityProvisioningException("Stalwart SCIM bearer token contains an invalid line break.");
+        }
+        if ("HYBRID".equals(provisioningMode)) {
+            try {
+                hybridProfileOutbox = HybridProfileOutbox.lookup(hybridOutboxJndiName);
+                registerHybridWorker();
+            } catch (Exception e) {
+                throw new IdentityProvisioningException(
+                        "Unable to initialize the durable HYBRID profile outbox from JNDI resource "
+                                + hybridOutboxJndiName + ".", e);
+            }
         }
     }
 
