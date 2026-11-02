@@ -130,15 +130,26 @@ public final class StalwartSCIMProfileEventHandler extends AbstractEventHandler 
 
         String displayName;
         String source;
+        String displayClaim = claimUri("stalwart.scim.hybrid.display-name-claim-uri",
+                "http://wso2.org/claims/displayname");
+        String givenClaim = claimUri("stalwart.scim.hybrid.given-name-claim-uri",
+                "http://wso2.org/claims/givenname");
+        String familyClaim = claimUri("stalwart.scim.hybrid.family-name-claim-uri",
+                "http://wso2.org/claims/lastname");
         if (displayChanged) {
-            displayName = snapshot.get(claimUri("stalwart.scim.hybrid.display-name-claim-uri",
-                    "http://wso2.org/claims/displayname"));
+            if (!snapshot.containsKey(displayClaim)) {
+                throw new IllegalStateException("The authoritative WSO2 snapshot omitted the changed DISPLAYNAME claim.");
+            }
+            displayName = snapshot.get(displayClaim);
             source = "EVENT_DISPLAYNAME";
         } else if (givenChanged || familyChanged) {
-            // Read both current name parts from the user store, not the partial event map.
-            displayName = joinName(
-                    snapshot.get(claimUri("stalwart.scim.hybrid.given-name-claim-uri", "http://wso2.org/claims/givenname")),
-                    snapshot.get(claimUri("stalwart.scim.hybrid.family-name-claim-uri", "http://wso2.org/claims/lastname")));
+            // Both claim keys must be returned by the authoritative user-store
+            // read. Empty values are allowed; missing values are not guessed.
+            if (!snapshot.containsKey(givenClaim) || !snapshot.containsKey(familyClaim)) {
+                throw new IllegalStateException(
+                        "The authoritative WSO2 snapshot is missing FIRSTNAME or LASTNAME; update remains unqueued.");
+            }
+            displayName = joinName(snapshot.get(givenClaim), snapshot.get(familyClaim));
             source = "EVENT_NAMEPARTS";
         } else {
             return;
