@@ -14,6 +14,8 @@ import org.osgi.service.component.annotations.Component;
 import org.osgi.service.component.annotations.Deactivate;
 import org.wso2.carbon.identity.provisioning.AbstractProvisioningConnectorFactory;
 import org.stalwart.identity.provisioning.connector.scim.StalwartSCIMProvisioningConnectorFactory;
+import org.stalwart.identity.provisioning.connector.scim.event.StalwartSCIMProfileEventHandler;
+import org.wso2.carbon.identity.event.handler.AbstractEventHandler;
 
 @Component(
         name = "org.stalwart.identity.provisioning.connector.scim.internal.StalwartSCIMConnectorServiceComponent",
@@ -35,6 +37,7 @@ public class StalwartSCIMConnectorServiceComponent {
     }
 
     private ServiceRegistration<?> factoryRegistration;
+    private ServiceRegistration<?> eventHandlerRegistration;
 
     public StalwartSCIMConnectorServiceComponent() {
         super();
@@ -65,9 +68,17 @@ public class StalwartSCIMConnectorServiceComponent {
 
             System.err.println(">>> STALWART-SCIM Service registered: " + factoryRegistration);
             if (factoryRegistration == null) {
-                throw new IllegalStateException("OSGi registerService returned null.");
+                throw new IllegalStateException("OSGi registerService returned null for provisioning factory.");
             }
 
+            StalwartSCIMProfileEventHandler eventHandler = new StalwartSCIMProfileEventHandler();
+            eventHandlerRegistration = bundleContext.registerService(
+                    AbstractEventHandler.class.getName(), eventHandler, null);
+            if (eventHandlerRegistration == null) {
+                throw new IllegalStateException("OSGi registerService returned null for profile event observer.");
+            }
+
+            System.err.println(">>> STALWART-SCIM Event observer registered: " + eventHandlerRegistration);
             System.err.println(">>> STALWART-SCIM ACTIVATE END v2.0.3 — READY");
             LOG.info("Stalwart SCIM connector activated; service registration=" + factoryRegistration);
         } catch (Throwable t) {
@@ -75,6 +86,8 @@ public class StalwartSCIMConnectorServiceComponent {
             t.printStackTrace(System.err);
             LOG.error("Stalwart SCIM connector activation failed.", t);
 
+            unregisterEventHandler();
+            unregisterFactory();
             if (t instanceof Error) {
                 throw (Error) t;
             }
@@ -88,14 +101,30 @@ public class StalwartSCIMConnectorServiceComponent {
     @Deactivate
     protected void deactivate(ComponentContext context) {
         System.err.println(">>> STALWART-SCIM DEACTIVATE v2.0.3");
+        unregisterEventHandler();
+        unregisterFactory();
+    }
+
+    private void unregisterEventHandler() {
+        if (eventHandlerRegistration != null) {
+            try {
+                eventHandlerRegistration.unregister();
+                System.err.println(">>> STALWART-SCIM event observer unregistered");
+            } catch (Throwable t) {
+                LOG.warn("Stalwart SCIM event observer unregistration failed.", t);
+            } finally {
+                eventHandlerRegistration = null;
+            }
+        }
+    }
+
+    private void unregisterFactory() {
         if (factoryRegistration != null) {
             try {
                 factoryRegistration.unregister();
-                System.err.println(">>> STALWART-SCIM service unregistered");
+                System.err.println(">>> STALWART-SCIM factory service unregistered");
             } catch (Throwable t) {
-                System.err.println(">>> STALWART-SCIM unregister failed: " + t);
-                t.printStackTrace(System.err);
-                LOG.warn("Stalwart SCIM service unregistration failed.", t);
+                LOG.warn("Stalwart SCIM factory unregistration failed.", t);
             } finally {
                 factoryRegistration = null;
             }
