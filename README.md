@@ -1,12 +1,53 @@
 # Stalwart SCIM Provisioning Connector
 
-[![Build](https://github.com/hsaeidh/stalwart-scim-connector/actions/workflows/build.yml/badge.svg?branch=feature/scim-bulk-2.0.2)](https://github.com/hsaeidh/stalwart-scim-connector/actions/workflows/build.yml)
+[![Build](https://github.com/hsaeidh/stalwart-scim-connector/actions/workflows/build.yml/badge.svg?branch=feature/hybrid-bulk-2.0.3)](https://github.com/hsaeidh/stalwart-scim-connector/actions/workflows/build.yml)
 
 An outbound SCIM 2.0 provisioning connector for WSO2 Identity Server 7.3.x and Stalwart Enterprise.
 
-**Development version: 2.0.2**  
-**Branch: feature/scim-bulk-2.0.2**  
+**Development version: 2.0.3-SNAPSHOT (work in progress)**  
+**Branch: feature/hybrid-bulk-2.0.3**  
 **Connector type: stalwart-scim**
+
+## 2.0.3 — development status (not release-ready)
+
+The 2.0.3 development branch includes an observation-only WSO2 event handler
+and targeted corrections for identity reconciliation. The following changes
+are now in the branch:
+
+- A repeated WSO2 POST first resolves the existing Stalwart user by immutable
+  `externalId`; it does not require the email claim when the account already
+  exists.
+- DELETE cache invalidation uses the resolved Stalwart resource ID and no
+  longer requires an email claim on the delete event.
+- A `userName` uniqueness conflict is not accepted as success unless the
+  existing resource is proven to have the same immutable `externalId`.
+- SCIM Bulk POST operations include the `bulkId` required by Stalwart.
+- Initial group memberships are applied once; existing-account reconciliation
+  applies only the received membership deltas.
+- The observer subscribes to `POST_ADD_USER` and `POST_SET_USER_CLAIMS`
+  when enabled in WSO2. It logs only a hashed user reference and whether the
+  three name claims were present in the event. It does not call Stalwart.
+
+**Not implemented or not yet verified:** HYBRID runtime dispatch, durable
+outbox, five-minute multi-user Bulk scheduler, complete WSO2 name-snapshot
+enrichment, and real CSV-import behavior. Do not enable this branch as a
+production release until those items and live WSO2/Stalwart tests pass.
+
+### Enable the event observer on WSO2 IS 7.3.0
+
+Add the following to `repository/conf/deployment.toml` only when you want to
+observe event delivery during testing:
+
+~~~toml
+[[event_handler]]
+name = "stalwart.scim.profile.observer"
+subscriptions = ["POST_ADD_USER", "POST_SET_USER_CLAIMS"]
+~~~
+
+Restart WSO2 and inspect `wso2carbon.log` for
+`Stalwart SCIM observer event=`. The handler is observation-only: it does not
+provision, queue, or modify any user. Run both UI and CSV-import tests and
+compare the observed event types before using events as a provisioning source.
 
 Version 2.0.1 retains the provisioning and activation work from 1.0.9 and introduces an immutable email identity policy. It also makes user-name updates use Stalwart's supported structured-name input and documents the resulting display-name behavior.
 
