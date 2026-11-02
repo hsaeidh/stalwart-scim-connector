@@ -174,7 +174,22 @@ public final class StalwartSCIMProfileEventHandler extends AbstractEventHandler 
 
     private boolean containsClaim(Object claims, String claimUri) {
         if (!(claims instanceof Map<?, ?> claimMap)) return false;
-        return claimMap.containsKey(claimUri);
+        if (claimMap.containsKey(claimUri)) return true;
+        // WSO2 versions may expose USER_CLAIMS with ClaimMapping keys rather
+        // than raw URI strings. Inspect the local claim URI without logging values.
+        for (Object key : claimMap.keySet()) {
+            if (key == null) continue;
+            try {
+                Object localClaim = key.getClass().getMethod("getLocalClaim").invoke(key);
+                if (localClaim != null) {
+                    Object uri = localClaim.getClass().getMethod("getClaimUri").invoke(localClaim);
+                    if (claimUri.equals(uri)) return true;
+                }
+            } catch (ReflectiveOperationException ignored) {
+                // A non-ClaimMapping key is simply not a matching claim.
+            }
+        }
+        return false;
     }
 
     private String joinName(String given, String family) {
