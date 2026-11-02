@@ -8,6 +8,8 @@ import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.stalwart.identity.provisioning.connector.scim.HybridProfileOutbox;
 import org.osgi.service.component.annotations.Component;
+import org.osgi.service.component.annotations.Activate;
+import org.osgi.service.component.annotations.Deactivate;
 import org.wso2.carbon.identity.core.bean.context.MessageContext;
 import org.wso2.carbon.identity.event.IdentityEventConstants;
 import org.wso2.carbon.identity.event.IdentityEventException;
@@ -36,6 +38,18 @@ public final class StalwartSCIMProfileEventHandler extends AbstractEventHandler 
 
     private static final Log LOG = LogFactory.getLog(StalwartSCIMProfileEventHandler.class);
     private static volatile HybridProfileOutbox outbox;
+
+    @Activate
+    protected void activate() {
+        LOG.info("Stalwart SCIM WSO2 event handler activated; HYBRID snapshot ingestion enabled="
+                + Boolean.parseBoolean(System.getProperty("stalwart.scim.hybrid.enabled", "false")));
+    }
+
+    @Deactivate
+    protected void deactivate() {
+        LOG.info("Stalwart SCIM WSO2 event handler deactivated.");
+        outbox = null;
+    }
 
     @Override
     public String getName() {
