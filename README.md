@@ -10,39 +10,37 @@ An outbound SCIM 2.0 provisioning connector for WSO2 Identity Server 7.3.x and S
 
 ## 2.0.3 — development status (not release-ready)
 
-The 2.0.3 development branch includes an observation-only WSO2 event handler
-and targeted corrections for identity reconciliation. The following changes
-are now in the branch:
+The 2.0.3 branch now contains the first implementation of HYBRID provisioning:
 
-- A repeated WSO2 POST first resolves the existing Stalwart user by immutable
-  `externalId`; it does not require the email claim when the account already
-  exists.
-- When WSO2 omits mapped claims on UPDATE/DELETE, the connector can use the
-  default-mapped local `entityName` as `externalId`; numeric usernames are never
-  misinterpreted as email addresses.
-- Before creating a user, a username collision is read and its `externalId` is
-  compared. A different externalId is rejected explicitly; a matching one is
-  reconciled instead of issuing another POST.
-- DELETE cache invalidation uses the resolved Stalwart resource ID and no
-  longer requires an email claim on the delete event.
-- A `userName` uniqueness conflict is not accepted as success unless the
-  existing resource is proven to have the same immutable `externalId`.
-- SCIM Bulk POST operations include the `bulkId` required by Stalwart.
-- Initial group memberships are applied once; existing-account reconciliation
-  applies only the received membership deltas.
-- The observer subscribes to `POST_ADD_USER` and `POST_SET_USER_CLAIMS`
-  when enabled in WSO2. It logs only a hashed user reference and whether the
-  three name claims were present in the event. It does not call Stalwart.
+- **Creation is immediate and Individual.** User creation is not delayed by the profile queue.
+- **Profile changes are event-driven.** The separate WSO2 event-handler bundle listens for `POST_SET_USER_CLAIMS`, detects changes to FIRSTNAME, LASTNAME or DISPLAYNAME using OR semantics, then reads the complete current claim snapshot from the WSO2 user store.
+- **DISPLAYNAME wins when DISPLAYNAME itself changed.** Otherwise, a FIRSTNAME or LASTNAME change composes the display name from the current WSO2 first/last-name snapshot. A partial event is never allowed to overwrite the current name with stale or incomplete data.
+- **The profile outbox is JDBC-persistent.** Updates are coalesced by scope and immutable externalId, with source priority, row locking, leases, retry scheduling and a DEAD state after ten failed attempts. No in-memory queue is used as the source of truth.
+- **A scheduler runs every five minutes.** It claims up to 25 profile updates and sends them as one multi-operation SCIM Bulk PATCH request. Bulk operation statuses are evaluated individually. If Stalwart does not expose an ETag, the version field is omitted; if it does, the current version is sent.
+- **Ambiguous Bulk outcomes are reconciled.** The connector reads each affected Stalwart User and acknowledges only when its displayName matches the queued value. Unsupported Bulk endpoints may fall back to individual PATCH.
+- **Non-profile mutations remain synchronous Individual requests.** Active state, Email entitlement, distribution-group membership and deletion do not wait for the profile scheduler.
+- **Identity reconciliation is hardened.** Repeated POST events resolve by immutable externalId first, then verify userName collisions against the existing externalId. UPDATE/DELETE events can use the default-mapped WSO2 entityName as externalId when the claim map is absent. DELETE cache invalidation does not require emailaddress.
+- **Stalwart Bulk POST operations include bulkId**, as required by the Stalwart endpoint. Existing-account group reconciliation avoids reapplying initial memberships.
 
-**Not implemented or not yet verified:** HYBRID runtime dispatch, durable
-outbox, five-minute multi-user Bulk scheduler, complete WSO2 name-snapshot
-enrichment, and real CSV-import behavior. Do not enable this branch as a
-production release until those items and live WSO2/Stalwart tests pass.
+### HYBRID configuration
 
-### Enable the event observer on WSO2 IS 7.3.0
+Set the WSO2 JVM system properties:
 
-Add the following to `repository/conf/deployment.toml` only when you want to
-observe event delivery during testing:
+~~~text
+-Dstalwart.scim.hybrid.enabled=true
+-Dstalwart.scim.hybrid.outbox.jndi=jdbc/WSO2CarbonDB
+~~~
+
+The JNDI resource must resolve to a durable shared JDBC DataSource. In a multi-node WSO2 deployment, all nodes must use the same database. The connector creates the table `STALWART_SCIM_PROFILE_OUTBOX` if it does not exist.
+
+For the WSO2 outbound connection, set:
+
+- `provisioning-mode=HYBRID`
+- `enable-profile-updates=true`
+- `hybrid-outbox-jndi-name=jdbc/WSO2CarbonDB` (must match the JVM property)
+- `hybrid-scope-id` to the exact event scope: `tenantDomain|userStoreDomain`, or `organizationId|tenantDomain|userStoreDomain` when the WSO2 event supplies a resident/accessing organization ID.
+
+Enable the event handler in `repository/conf/deployment.toml`:
 
 ~~~toml
 [[event_handler]]
@@ -50,10 +48,10 @@ name = "stalwart.scim.profile.observer"
 subscriptions = ["POST_ADD_USER", "POST_SET_USER_CLAIMS"]
 ~~~
 
-Restart WSO2 and inspect `wso2carbon.log` for
-`Stalwart SCIM observer event=`. The handler is observation-only: it does not
-provision, queue, or modify any user. Run both UI and CSV-import tests and
-compare the observed event types before using events as a provisioning source.
+The handler is observation-only for `POST_ADD_USER`. For `POST_SET_USER_CLAIMS`, it enqueues a complete profile snapshot only when the HYBRID JVM property is enabled and one of the three name claims changed. It does not call Stalwart directly.
+
+**Still required before release:** install both bundles in the exact WSO2 IS 7.3.0 environment; verify OSGi resolution and event delivery; test UI updates and CSV import (create and update); test multi-node lease behavior; run real Stalwart Enterprise tests for Bulk PATCH, partial operation failures, ETag/version behavior, auth errors and retry recovery. These live integration tests have not been run in this development session, so 2.0.3 remains a development snapshot, not a production release.
+
 
 Version 2.0.1 retains the provisioning and activation work from 1.0.9 and introduces an immutable email identity policy. It also makes user-name updates use Stalwart's supported structured-name input and documents the resulting display-name behavior.
 
