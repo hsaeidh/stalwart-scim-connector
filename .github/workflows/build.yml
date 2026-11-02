@@ -31,6 +31,7 @@ jobs:
           test -n "$JAR"
           python3 - "$JAR" <<'PY'
           import sys
+          import os
           import zipfile
           import xml.etree.ElementTree as ET
 
@@ -182,12 +183,28 @@ jobs:
           assert "targetUserIdentifier(attrs" in source, (
               "Group membership updates must resolve users through the stable identifier"
           )
+          assert "Wso2UserClaimSnapshot.read" in source, (
+              "Name claim updates must read the current WSO2 UserStore snapshot without an Event Handler"
+          )
+          assert "ScimOperationOutbox" in source and "flushScimOperationOutbox" in source, (
+              "Expected durable SCIM Bulk outbox and background worker"
+          )
+          assert "claimBatch(scimOperationScope" in source, (
+              "Expected durable queue claim/lease processing"
+          )
+          assert 'System.getProperty("stalwart.scim.hybrid' not in source, (
+              "Connector must not require custom HYBRID JVM properties"
+          )
+          assert not os.path.exists(
+              "components/org.stalwart.identity.provisioning.event.handler/pom.xml"
+          ), "A separate WSO2 Event Handler module must not be required or built"
+
           assert "EMAIL_ALIASES_CLAIM_URI" not in source, (
               "Email alias synchronization must remain disabled"
           )
 
           print("Verified nested Gson and unsigned JAR.")
-          print("Verified connector-native RealmService integration; no separate Event Handler bundle is required.")
+          print("Verified connector-native RealmService integration and durable Bulk outbox without JVM/Event Handler setup.")
           PY
       - name: Upload single deployable connector JAR
         uses: actions/upload-artifact@v6
