@@ -311,6 +311,11 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
         }
         if (pending.isEmpty()) return;
 
+        if (bulkUnsupportedEndpoints.containsKey(profileUpdateBaseUrl())) {
+            sendHybridIndividualFallback(pending, leaseOwner);
+            return;
+        }
+
         JsonArray operations = new JsonArray();
         for (HybridPatch item : pending) {
             JsonArray patchOperations = new JsonArray();
@@ -352,17 +357,7 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
             if ((status == 404 || status == 405 || status == 501) && bulkFallbackToIndividual) {
                 bulkUnsupportedEndpoints.put(profileUpdateBaseUrl(), Boolean.TRUE);
                 log.warn("Stalwart Bulk endpoint is unavailable for HYBRID profile updates; using individual PATCH fallback.");
-                for (HybridPatch item : pending) {
-                    try {
-                        JsonArray patchOperations = new JsonArray();
-                        addReplace(patchOperations, "displayName", item.entry().displayName());
-                        requestAtIndividual(profileUpdateBaseUrl(), "PATCH",
-                                "/Users/" + pathSegment(item.userId()), patchDocument(patchOperations));
-                        hybridProfileOutbox.markSent(item.entry().key(), leaseOwner);
-                    } catch (Exception e) {
-                        markHybridRetry(item.entry(), leaseOwner, "Individual fallback failed: " + e);
-                    }
-                }
+                sendHybridIndividualFallback(pending, leaseOwner);
                 return;
             }
             if (status < 200 || status >= 300) {
@@ -406,6 +401,20 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
             for (HybridPatch item : pending) markHybridRetry(item.entry(), leaseOwner, e.getMessage());
         } catch (SQLException e) {
             log.error("Unable to update HYBRID outbox state after Stalwart response.", e);
+        }
+    }
+
+    private void sendHybridIndividualFallback(List<HybridPatch> pending, String leaseOwner) {
+        for (HybridPatch item : pending) {
+            try {
+                JsonArray patchOperations = new JsonArray();
+                addReplace(patchOperations, "displayName", item.entry().displayName());
+                requestAtIndividual(profileUpdateBaseUrl(), "PATCH",
+                        "/Users/" + pathSegment(item.userId()), patchDocument(patchOperations));
+                hybridProfileOutbox.markSent(item.entry().key(), leaseOwner);
+            } catch (Exception e) {
+                markHybridRetry(item.entry(), leaseOwner, "Individual fallback failed: " + e);
+            }
         }
     }
 
