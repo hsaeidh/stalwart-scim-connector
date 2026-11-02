@@ -35,10 +35,6 @@ import java.lang.reflect.Method;
 public final class StalwartSCIMProfileEventHandler extends AbstractEventHandler {
 
     private static final Log LOG = LogFactory.getLog(StalwartSCIMProfileEventHandler.class);
-    private static final String GIVEN_NAME = "http://wso2.org/claims/givenname";
-    private static final String FAMILY_NAME = "http://wso2.org/claims/lastname";
-    private static final String DISPLAY_NAME = "http://wso2.org/claims/displayname";
-    private static final String EXTERNAL_ID = "http://wso2.org/claims/username";
     private static volatile HybridProfileOutbox outbox;
 
     @Override
@@ -74,9 +70,9 @@ public final class StalwartSCIMProfileEventHandler extends AbstractEventHandler 
         boolean userStoreManagerAvailable =
                 properties.get(IdentityEventConstants.EventProperty.USER_STORE_MANAGER) != null;
 
-        boolean givenNameChanged = containsClaim(claimsValue, "http://wso2.org/claims/givenname");
-        boolean familyNameChanged = containsClaim(claimsValue, "http://wso2.org/claims/lastname");
-        boolean displayNameChanged = containsClaim(claimsValue, "http://wso2.org/claims/displayname");
+        boolean givenNameChanged = containsClaim(claimsValue, claimUri("stalwart.scim.hybrid.given-name-claim-uri", "http://wso2.org/claims/givenname"));
+        boolean familyNameChanged = containsClaim(claimsValue, claimUri("stalwart.scim.hybrid.family-name-claim-uri", "http://wso2.org/claims/lastname"));
+        boolean displayNameChanged = containsClaim(claimsValue, claimUri("stalwart.scim.hybrid.display-name-claim-uri", "http://wso2.org/claims/displayname"));
 
         LOG.info("Stalwart SCIM observer event=" + eventName
                 + ", userRef=" + safeReference(userName)
@@ -119,8 +115,14 @@ public final class StalwartSCIMProfileEventHandler extends AbstractEventHandler 
 
         String localUserName = removeDomain(userName, userStoreDomain);
         Map<String, String> snapshot = readClaims(manager, localUserName,
-                new String[]{GIVEN_NAME, FAMILY_NAME, DISPLAY_NAME, EXTERNAL_ID});
-        String externalId = snapshot.get(EXTERNAL_ID);
+                new String[]{
+                        claimUri("stalwart.scim.hybrid.given-name-claim-uri", "http://wso2.org/claims/givenname"),
+                        claimUri("stalwart.scim.hybrid.family-name-claim-uri", "http://wso2.org/claims/lastname"),
+                        claimUri("stalwart.scim.hybrid.display-name-claim-uri", "http://wso2.org/claims/displayname"),
+                        claimUri("stalwart.scim.hybrid.external-id-claim-uri", "http://wso2.org/claims/username")
+                });
+        String externalId = snapshot.get(claimUri("stalwart.scim.hybrid.external-id-claim-uri",
+                "http://wso2.org/claims/username"));
         if (externalId == null || externalId.isBlank()) externalId = localUserName;
         if (externalId == null || externalId.isBlank()) {
             throw new IllegalStateException("Current WSO2 snapshot did not contain a stable externalId.");
@@ -129,11 +131,14 @@ public final class StalwartSCIMProfileEventHandler extends AbstractEventHandler 
         String displayName;
         String source;
         if (displayChanged) {
-            displayName = snapshot.get(DISPLAY_NAME);
+            displayName = snapshot.get(claimUri("stalwart.scim.hybrid.display-name-claim-uri",
+                    "http://wso2.org/claims/displayname"));
             source = "EVENT_DISPLAYNAME";
         } else if (givenChanged || familyChanged) {
             // Read both current name parts from the user store, not the partial event map.
-            displayName = joinName(snapshot.get(GIVEN_NAME), snapshot.get(FAMILY_NAME));
+            displayName = joinName(
+                    snapshot.get(claimUri("stalwart.scim.hybrid.given-name-claim-uri", "http://wso2.org/claims/givenname")),
+                    snapshot.get(claimUri("stalwart.scim.hybrid.family-name-claim-uri", "http://wso2.org/claims/lastname")));
             source = "EVENT_NAMEPARTS";
         } else {
             return;
@@ -205,6 +210,11 @@ public final class StalwartSCIMProfileEventHandler extends AbstractEventHandler 
         if (first.isEmpty()) return last;
         if (last.isEmpty()) return first;
         return first + " " + last;
+    }
+
+    private String claimUri(String property, String defaultValue) {
+        String value = System.getProperty(property);
+        return value == null || value.isBlank() ? defaultValue : value.trim();
     }
 
     private String stringValue(Object value) {
