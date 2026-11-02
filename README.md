@@ -1,167 +1,213 @@
-# راهنمای فارسی کانکتور WSO2 به Stalwart از طریق SCIM 2.0
+# راهنمای فارسی کانکتور WSO2 Identity Server به Stalwart با SCIM 2.0
 
-[![Build](https://github.com/hsaeidh/stalwart-scim-connector/actions/workflows/build.yml/badge.svg?branch=feature/2.0.4)](https://github.com/hsaeidh/stalwart-scim-connector/actions/workflows/build.yml)
+- **نسخه توسعه:** 2.0.5-SNAPSHOT
+- **شاخه:** feature/2.0.5
+- **نسخه هدف WSO2:** Identity Server 7.3.0
+- **مقصد:** Stalwart Enterprise با قابلیت SCIM 2.0
+- **نوع اتصال:** Outbound Provisioning Connector
+- **احراز هویت:** Bearer Token
+- **بسته قابل نصب:** فقط یک فایل JAR
 
-- **نسخه:** 2.0.4-SNAPSHOT
-- **شاخه:** feature/2.0.4
-- **نوع Connector در WSO2:** stalwart-scim
-- **سازگاری هدف:** WSO2 Identity Server 7.3.x و Stalwart Enterprise با قابلیت SCIM
-- **پروتکل:** SCIM 2.0 و Bearer Token
-- **وضعیت:** نسخه توسعه؛ پیش از بهره‌برداری باید آزمون‌های یکپارچه‌سازی واقعی انجام شود.
-
----
-
-## ۱. هدف و معماری
-
-این پروژه یک کانکتور Outbound برای انتقال رویدادهای مجاز کاربران و عضویت گروه‌های توزیع ایمیل از WSO2 Identity Server به Stalwart است. نام کاربری داخلی WSO2 الزاماً آدرس ایمیل نیست.
-
-| مفهوم | نمونه | کاربرد |
-|---|---|---|
-| نام کاربری داخلی WSO2 | 1234567890 | شناسه محلی کاربر در WSO2 |
-| Claim ایمیل اصلی | person@example.com | فقط برای مقدار اولیه userName هنگام ایجاد |
-| SCIM userName | person@example.com | نام کاربری و آدرس اصلی اولیه در Stalwart |
-| SCIM externalId | 1234567890 | شناسه پایدار بین دو سامانه |
-| SCIM displayName | Person Example | نام نمایشی کاربر |
-
-**سیاست هویتی نسخه 2.0.4:** پس از ایجاد حساب، تغییر آدرس اصلی ایمیل، تغییر یا افزودن یا حذف Alias و تغییر username داخلی WSO2 هیچ تغییری در Stalwart ایجاد نمی‌کند. هیچ درخواست SCIM و هیچ رکوردی در صف HYBRID برای این رویدادها تولید نمی‌شود. userName و externalId موجود در Stalwart در Update تغییر نمی‌کنند.
-
-اجزای اصلی:
-1. کانکتور Outbound برای ساخت حساب، وضعیت فعال، نام نمایشی، عضویت گروه و حذف حساب.
-2. WSO2 Profile Event Handler برای تشخیص تغییر FIRSTNAME/LASTNAME/DISPLAYNAME و ثبت تصویر کامل Claimها در صف؛ این Handler مستقیماً به Stalwart درخواست نمی‌فرستد.
-3. JDBC Durable Outbox به‌عنوان صف پایدار تغییرات نام.
-4. HYBRID Worker برای پردازش صف هر پنج دقیقه و ارسال چند PATCH در یک درخواست Bulk.
+> نسخه 2.0.5 برای حذف وابستگی به Event Handler جداگانه و تنظیمات دستی JVM طراحی شده است. نصب این نسخه به یک JAR و تنظیمات UI اتصال نیاز دارد. صف پایدار از دیتابیس استاندارد WSO2 با نام JNDI برابر jdbc/WSO2CarbonDB استفاده می‌کند.
 
 ---
 
-## ۲. حالت‌های ارسال
+## ۱. تغییرات مهم نسخه 2.0.5
 
-| حالت | ایجاد کاربر | تغییر نام/نام خانوادگی/DisplayName | وضعیت فعال | عضویت گروه توزیع | حذف کاربر |
+1. **حذف Event Handler جداگانه:** دیگر نیازی به ثبت رویدادهای POST_ADD_USER یا POST_SET_USER_CLAIMS در deployment.toml نیست.
+2. **حذف JVM Propertyها:** هیچ تنظیمی با پیشوند stalwart.scim.hybrid لازم نیست.
+3. **یک JAR قابل نصب:** Connector، منطق خواندن Claimهای جاری WSO2 و Outbox در همان Bundle قرار دارند.
+4. **صف پایدار برای BULK:** پیش از ارسال هر عملیات تغییردهنده به Stalwart، درخواست در جدول JDBC ثبت و Commit می‌شود.
+5. **بازیابی پس از راه‌اندازی مجدد:** عملیات ثبت‌شده و تأییدنشده پس از restart شدن WSO2 یا خاموش و روشن شدن سرور از دیتابیس بازیابی می‌شوند.
+6. **Bulk چندعملیاتی:** Worker چند عملیات صف‌شده را در یک درخواست SCIM Bulk قرار می‌دهد و نتیجه هر عملیات را جداگانه ثبت می‌کند.
+7. **بازیابی خودکار خطاها:** خطاهای موقت با backoff مجدداً تلاش می‌شوند؛ عملیات دائماً ناموفق به وضعیت DEAD می‌رود و برای بررسی باقی می‌ماند.
+8. **خواندن Claim کامل بدون Handler:** برای تغییر FIRSTNAME یا LASTNAME، کانکتور با RealmService داخلی WSO2، مقادیر جاری Claimها را از UserStore می‌خواند.
+9. **حفظ قرارداد هویت:** تغییر ایمیل اصلی، Aliasها و username داخلی WSO2 به Stalwart ارسال نمی‌شود.
+
+## ۲. معماری و حالت‌های اجرا
+
+### INDIVIDUAL
+
+هر عملیات تغییردهنده بلافاصله با endpoint استاندارد SCIM اجرا می‌شود. پاسخ Stalwart به WSO2 برگردانده می‌شود. در این حالت صف پایدار استفاده نمی‌شود.
+
+### BULK
+
+هر عملیات ابتدا در جدول STALWART_SCIM_OPERATION_OUTBOX در دیتابیس WSO2 ذخیره می‌شود. پس از Commit شدن رکورد، کانکتور تلاش می‌کند آن را فوراً ارسال کند. علاوه بر این، Worker پس‌زمینه هر ۱۵ ثانیه صف را بررسی می‌کند و حداکثر ۲۵ عملیات را در یک درخواست Bulk جمع می‌کند.
+
+اگر WSO2 یا سرور خاموش شود، رکوردهای Pending و In-Flight از بین نمی‌روند. پس از راه‌اندازی مجدد و مقداردهی مجدد اتصال، Worker پردازش را ادامه می‌دهد. رکوردهای In-Flight پس از پایان مهلت Lease دوباره قابل دریافت می‌شوند.
+
+اگر عملیات در مهلت درخواست به تأیید Stalwart نرسد، WSO2 خطای Provisioning دریافت می‌کند؛ اما رکورد در صف باقی می‌ماند و Worker به تلاش خود ادامه می‌دهد. بنابراین «ثبت موفق در صف» با «اعمال قطعی در Stalwart» یکسان نیست.
+
+### HYBRID
+
+- ایجاد کاربر: فوری و از طریق Individual POST.
+- تغییر FIRSTNAME، LASTNAME یا DISPLAYNAME: ثبت در صف پایدار و ارسال Bulk چندعملیاتی هر پنج دقیقه.
+- تغییر وضعیت فعال و عضویت گروه‌ها: فوری و از طریق Individual.
+- خواندن تصویر کامل FIRSTNAME و LASTNAME: از UserStore داخلی WSO2 و از طریق RealmService؛ بدون Event Handler.
+
+### تفاوت PATCH و Bulk
+
+PATCH روش تغییر یک منبع SCIM است. Bulk روش انتقال چند عملیات SCIM در یک درخواست HTTP است. یک عملیات PATCH می‌تواند در حالت INDIVIDUAL از endpoint کاربر ارسال شود یا در حالت BULK/HYBRID داخل آرایه Operations درخواست Bulk قرار گیرد.
+
+| حالت | ایجاد کاربر | تغییر نام | active و عضویت گروه | حذف کاربر | صف پایدار |
 |---|---|---|---|---|---|
-| INDIVIDUAL | POST مستقل و فوری | PATCH مستقل و فوری | PATCH مستقل و فوری | PATCH مستقل و فوری | DELETE مستقل و فوری |
-| BULK | Bulk هم‌زمان تک‌عملیاتی | Bulk هم‌زمان تک‌عملیاتی PATCH | Bulk تک‌عملیاتی PATCH | Bulk تک‌عملیاتی PATCH | Bulk تک‌عملیاتی DELETE |
-| HYBRID | POST مستقل و فوری | صف پایدار و Bulk چندعملیاتی هر پنج دقیقه | PATCH مستقل و فوری | PATCH مستقل و فوری | DELETE مستقل و فوری |
-
-INDIVIDUAL از endpoint استاندارد هر منبع استفاده می‌کند. BULK هر عملیات را هم‌زمان از endpoint Bulk و در یک درخواست تک‌عملیاتی می‌فرستد؛ این حالت صف یا تجمیع رویدادها نیست. HYBRID فقط تغییرات نام را صف می‌کند و چند کاربر را در یک درخواست Bulk جمع می‌کند. ایجاد کاربر و سایر عملیات غیرپروفایلی در HYBRID منتظر زمان‌بندی نمی‌مانند.
-
-PATCH روش تغییر منبع SCIM است؛ Bulk روش انتقال یک یا چند عملیات در یک درخواست HTTP است. این دو مفهوم جایگزین یکدیگر نیستند.
+| INDIVIDUAL | POST فوری | PATCH فوری | PATCH فوری | DELETE فوری | ندارد |
+| BULK | Bulk POST | Bulk PATCH | Bulk PATCH | Bulk DELETE | همه عملیات تغییردهنده |
+| HYBRID | POST فوری | Bulk PATCH هر ۵ دقیقه | PATCH فوری | DELETE فوری | فقط تغییرات نام |
 
 ---
 
-## ۳. جدول رفتار قطعی نسخه 2.0.4
+## ۳. جدول رفتار نهایی نرم‌افزار
 
-در مواردی که «هیچ درخواستی» درج شده، کانکتور نه POST، نه PATCH، نه DELETE و نه GET جست‌وجویی انجام می‌دهد و هیچ چیزی نیز در صف HYBRID ثبت نمی‌کند.
+این جدول قرارداد قطعی نسخه 2.0.5 است. در ردیف‌هایی که «هیچ» نوشته شده، هیچ درخواست GET/POST/PATCH/DELETE به Stalwart ارسال نمی‌شود و رکوردی هم در صف ثبت نمی‌شود.
 
-| رویداد WSO2 | رفتار Stalwart | روش و زمان ارسال | توضیح |
+| رویداد در WSO2 | رفتار Stalwart | روش و زمان | توضیح |
 |---|---|---|---|
-| ایجاد کاربر جدید | ایجاد User | فوری؛ POST مستقل در INDIVIDUAL و HYBRID، Bulk تک‌عملیاتی در BULK | ایمیل کامل برای userName اولیه و شناسه پایدار برای externalId لازم است. |
-| تغییر FIRSTNAME | تغییر displayName | INDIVIDUAL: PATCH فوری؛ BULK: Bulk تک‌عملیاتی؛ HYBRID: صف و Bulk چندعملیاتی هر پنج دقیقه | شرط OR است؛ تغییر FIRSTNAME به‌تنهایی کافی است. مقدار نهایی از تصویر کامل FIRSTNAME و LASTNAME ساخته می‌شود. |
-| تغییر LASTNAME | تغییر displayName | مطابق حالت؛ در HYBRID هر پنج دقیقه | تغییر LASTNAME به‌تنهایی کافی است. |
-| تغییر DISPLAYNAME | تغییر displayName | مطابق حالت؛ در HYBRID هر پنج دقیقه | اگر خود DISPLAYNAME تغییر کرده باشد، مقدار جاری آن اولویت دارد. |
-| تغییر چند فیلد نام | یک displayName نهایی | مطابق حالت؛ در HYBRID آخرین مقدار معتبر تجمیع می‌شود | از PATCHهای متعارض جلوگیری می‌شود. |
+| ایجاد کاربر جدید | ایجاد User | فوری در INDIVIDUAL/HYBRID؛ صف و Bulk در BULK | ایمیل کامل برای userName اولیه و externalId پایدار لازم است. |
+| تغییر FIRSTNAME | تغییر displayName | فوری در INDIVIDUAL؛ صف و Bulk در BULK؛ صف پنج‌دقیقه‌ای در HYBRID | تغییر هر یک از سه Claim نام کافی است؛ شرط OR است. |
+| تغییر LASTNAME | تغییر displayName | مطابق حالت اجرا | تصویر کامل نام از UserStore خوانده می‌شود. |
+| تغییر DISPLAYNAME | تغییر displayName | مطابق حالت اجرا | مقدار جاری DISPLAYNAME اولویت دارد. |
+| تغییر هم‌زمان چند Claim نام | یک displayName نهایی | مطابق حالت اجرا | از ارسال PATCHهای متعارض جلوگیری می‌شود. |
 | تغییر آدرس اصلی ایمیل | هیچ تغییری | هیچ درخواست و هیچ صفی | userName در Stalwart تغییر نمی‌کند. |
 | تغییر Alias ایمیل | هیچ تغییری | هیچ درخواست و هیچ صفی | Alias همگام‌سازی نمی‌شود. |
-| اضافه‌کردن Alias ایمیل | هیچ تغییری | هیچ درخواست و هیچ صفی | Alias جدید به Stalwart اضافه نمی‌شود. |
-| حذف Alias ایمیل | هیچ تغییری | هیچ درخواست و هیچ صفی | هیچ PATCH یا DELETE مربوط به Alias ارسال نمی‌شود. |
-| تغییر username داخلی WSO2 | هیچ تغییری | هیچ درخواست و هیچ صفی | externalId موجود در Stalwart تغییر نمی‌کند و حساب جدیدی ساخته نمی‌شود. |
-| افزودن به گروه Email | فعال‌کردن حساب | PATCH فوری؛ در BULK از Bulk تک‌عملیاتی | گروه Email در Stalwart ساخته یا به‌عنوان گروه SCIM ارسال نمی‌شود؛ فقط active=true. |
-| حذف از گروه Email | غیرفعال‌کردن حساب | PATCH فوری؛ در BULK از Bulk تک‌عملیاتی | فقط active=false اعمال می‌شود. |
-| تغییر Claim فعال‌بودن | تغییر active | PATCH فوری؛ در BULK از Bulk تک‌عملیاتی | فقط Claim بولی پیکربندی‌شده بررسی می‌شود؛ قابلیت معکوس‌سازی مقدار وجود دارد. |
-| افزودن عضویت گروه توزیع دیگر | افزودن عضو به Group موجود | PATCH فوری؛ در BULK از Bulk تک‌عملیاتی | گروه باید از قبل در Stalwart ساخته شده باشد. |
-| حذف عضویت گروه توزیع دیگر | حذف عضو از Group موجود | PATCH فوری؛ در BULK از Bulk تک‌عملیاتی | فقط delta عضویت اعمال می‌شود. |
-| ساخت/ویرایش/حذف خود گروه WSO2 | هیچ تغییر گروهی | هیچ درخواست گروهی | چرخه عمر گروه‌های Stalwart جداگانه مدیریت می‌شود. |
-| حذف کاربر از WSO2 | حذف حساب Stalwart | DELETE فوری؛ در BULK از Bulk تک‌عملیاتی | حذف با غیرفعال‌سازی متفاوت است و ممکن است حذف داده‌های حساب را زمان‌بندی کند. |
-| تغییر رمز عبور WSO2 | هیچ تغییری | هیچ درخواست SCIM | رمز عبور توسط کانکتور provision نمی‌شود. |
+| اضافه‌کردن Alias ایمیل | هیچ تغییری | هیچ درخواست و هیچ صفی | Alias جدید ایجاد نمی‌شود. |
+| حذف Alias ایمیل | هیچ تغییری | هیچ درخواست و هیچ صفی | Alias حذف نمی‌شود. |
+| تغییر username داخلی WSO2 | هیچ تغییری | هیچ درخواست و هیچ صفی | externalId موجود ثابت می‌ماند. |
+| افزودن به گروه Email | active=true | فوری در INDIVIDUAL/HYBRID؛ صف و Bulk در BULK | گروه Email در Stalwart ساخته نمی‌شود. |
+| حذف از گروه Email | active=false | فوری در INDIVIDUAL/HYBRID؛ صف و Bulk در BULK | دسترسی ایمیل غیرفعال می‌شود. |
+| تغییر Claim وضعیت حساب | تغییر active | فوری در INDIVIDUAL/HYBRID؛ صف و Bulk در BULK | فقط Claim بولی تنظیم‌شده بررسی می‌شود. |
+| افزودن به گروه توزیع دیگر | افزودن عضو به Group | فوری در INDIVIDUAL/HYBRID؛ صف و Bulk در BULK | گروه باید از قبل در Stalwart وجود داشته باشد. |
+| حذف عضویت گروه توزیع دیگر | حذف عضو از Group | فوری در INDIVIDUAL/HYBRID؛ صف و Bulk در BULK | فقط تغییر عضویت اعمال می‌شود. |
+| ساخت/ویرایش/حذف خود گروه WSO2 | هیچ تغییر گروهی | هیچ درخواست گروهی | چرخه عمر Groupهای Stalwart مستقل است. |
+| حذف کاربر از WSO2 | DELETE User | فوری در INDIVIDUAL/HYBRID؛ صف و Bulk در BULK | حذف با غیرفعال‌سازی تفاوت دارد. |
+| تغییر رمز عبور WSO2 | هیچ تغییری | هیچ درخواست SCIM | رمز عبور provision نمی‌شود. |
 
-### قواعد هویت
+### قواعد ثابت هویت
 
-- externalId کلید پایدار تطبیق کاربر است.
-- userName فقط هنگام ایجاد اولیه از Claim ایمیل گرفته می‌شود.
-- در Update هیچ‌گاه userName یا externalId تغییر نمی‌کند.
-- رویدادهایی که فقط ایمیل، Alias یا username داخلی را تغییر داده‌اند، پیش از هر درخواست SCIM متوقف می‌شوند.
-- در رویداد ایجاد تکراری، ابتدا externalId جست‌وجو می‌شود. اگر userName به حسابی دیگر برسد، فقط تطابق دقیق externalId اجازه reconcile می‌دهد. حساب متعلق به شناسه دیگر تصاحب یا بازنویسی نمی‌شود.
+- externalId شناسه پایدار اتصال دو سامانه است.
+- userName فقط هنگام ایجاد اولیه از Claim ایمیل اصلی گرفته می‌شود.
+- در هیچ Update مقدار userName یا externalId تغییر نمی‌کند.
+- تطبیق حساب موجود با externalId انجام می‌شود؛ تطبیق صرف با ایمیل برای تصاحب حساب مجاز نیست.
+- برخورد userName با حسابی که externalId متفاوت دارد، خطای تعارض است و کانکتور آن حساب را تصاحب نمی‌کند.
 
 ---
 
-## ۴. منطق تغییر نام و صف HYBRID
+## ۴. صف پایدار BULK
 
-شرط تشخیص تغییر نام OR است:
+### محل ذخیره‌سازی
+
+نام جدول:
+
+STALWART_SCIM_OPERATION_OUTBOX
+
+نام JNDI پیش‌فرض:
+
+jdbc/WSO2CarbonDB
+
+کانکتور این DataSource استاندارد WSO2 را به‌صورت خودکار پیدا می‌کند و جدول و Index موردنیاز را در اولین مقداردهی ایجاد می‌کند. نیازی به تعریف متغیر محیطی، JVM Property، فایل تنظیمات جداگانه یا افزودن DataSource جدید نیست.
+
+### چرخه عمر یک عملیات
+
+1. WSO2 رویداد Provisioning را به Connector تحویل می‌دهد.
+2. کانکتور درخواست SCIM را با Method، Path و Payload نهایی آماده می‌کند.
+3. عملیات در Outbox ذخیره و تراکنش Commit می‌شود.
+4. کانکتور برای کاهش تأخیر، فوراً تلاش می‌کند صف را تخلیه کند.
+5. Worker پس‌زمینه نیز هر ۱۵ ثانیه عملیات Pending را بررسی می‌کند.
+6. عملیات‌ها بر اساس مقصد دسته‌بندی و در Bulk چندعملیاتی ارسال می‌شوند.
+7. پاسخ هر Operation جداگانه ارزیابی می‌شود.
+8. عملیات موفق به SENT می‌رود؛ عملیات موقتاً ناموفق دوباره زمان‌بندی می‌شود؛ خطاهای دائمی یا رسیدن به سقف تلاش به DEAD می‌روند.
+
+### وضعیت‌های رکورد
+
+| وضعیت | معنی |
+|---|---|
+| PENDING | در صف و آماده ارسال یا تلاش مجدد |
+| IN_FLIGHT | توسط یک Worker دریافت شده و Lease فعال دارد |
+| SENT | Stalwart عملیات را موفق اعلام کرده است |
+| DEAD | تعداد تلاش‌ها تمام شده یا خطای غیرقابل‌تکرار رخ داده است |
+
+- حداکثر ۲۵ عملیات در هر نوبت دریافت می‌شود.
+- اندازه درخواست پیش از ارسال کنترل می‌شود.
+- Lease عملیات پس از crash یا توقف Worker منقضی می‌شود تا Worker بعدی بتواند آن را بازیابی کند.
+- تلاش مجدد با backoff افزایشی انجام می‌شود.
+- حداکثر ۲۰ تلاش برای عملیات ناموفق انجام می‌شود.
+- رکوردهای SENT تا ۳۰ روز نگهداری و سپس پاک‌سازی می‌شوند.
+- رکوردهای DEAD برای بررسی اپراتور باقی می‌مانند.
+- Bearer Token و رمز عبور در Outbox ذخیره نمی‌شوند؛ Payloadهای Provisioning ممکن است حاوی اطلاعات پروفایل باشند و باید از دیتابیس WSO2 محافظت شود.
+
+### ماندگاری در VM و Docker
+
+در نصب مستقیم روی VM، دیتابیس WSO2 باید روی دیسک پایدار باقی بماند. اگر از دیتابیس H2 پیش‌فرض استفاده می‌کنید، فایل‌های دیتابیس در مسیر دیتابیس نصب WSO2 نگهداری می‌شوند.
+
+در Docker، حذف و ساخت مجدد Container نباید باعث حذف دیتابیس WSO2 شود. مسیر دیتابیس WSO2 را روی Volume پایدار نگه دارید. اگر دیتابیس یا Volume حذف شود، هیچ نرم‌افزاری نمی‌تواند رکوردهای صف را بازیابی کند.
+
+در نصب چندنودی، همه نودها باید به یک DataSource مشترک و پایدار متصل باشند. دیتابیس محلی مستقل هر نود، صف مشترک کلاستر محسوب نمی‌شود.
+
+### رفتار در خطا
+
+- پاسخ قطعی 404/405/501 از endpoint Bulk، در صورت فعال بودن fallback، باعث ارسال همان رکوردهای ذخیره‌شده از endpointهای Individual می‌شود.
+- خطای شبکه با نتیجه نامشخص باعث حذف رکورد نمی‌شود.
+- POST کاربر پس از نتیجه مبهم با externalId تطبیق داده می‌شود تا از ایجاد حساب تکراری جلوگیری شود.
+- PATCHهای replace و DELETEهای تکراری با سیاست idempotent مدیریت می‌شوند.
+- موفقیت HTTP کلی Bulk به‌تنهایی کافی نیست؛ نتیجه تک‌تک Operations بررسی می‌شود.
+
+---
+
+## ۵. منطق نام نمایشی بدون Event Handler
+
+کانکتور برای تغییر نام به رویدادهای WSO2 Event Framework وابسته نیست. خود Outbound Connector در زمان دریافت Provisioning، Claimهای جاری را از UserStore می‌خواند.
+
+شرط تشخیص تغییر نام:
 
 FIRSTNAME changed OR LASTNAME changed OR DISPLAYNAME changed
 
-- اگر DISPLAYNAME تغییر کرده باشد، مقدار جاری و معتبر DISPLAYNAME استفاده می‌شود.
-- اگر FIRSTNAME یا LASTNAME تغییر کرده باشد، تصویر کامل و جدید هر دو Claim از UserStore خوانده می‌شود و displayName از آن‌ها ساخته می‌شود.
-- اگر تصویر کامل Claimها ناقص باشد، مقدار قدیمی یا ناقص به Stalwart ارسال نمی‌شود.
-- مقدار خالی نباید باعث پاک‌شدن ناخواسته نام نمایشی شود.
-- تغییرات متوالی یک کاربر در صف ادغام می‌شوند و آخرین مقدار معتبر باقی می‌ماند.
-
-### صف پایدار
-
-نام جدول: STALWART_SCIM_PROFILE_OUTBOX
-
-ویژگی‌ها:
-- ثبت و ادغام اتمیک تغییرات؛
-- کلیدگذاری بر اساس scope و externalId؛
-- جداسازی مقصد، سازمان، tenant و user store؛
-- قفل‌گذاری ردیفی و lease برای جلوگیری از پردازش هم‌زمان یک رکورد توسط چند worker؛
-- وضعیت‌های PENDING، IN_FLIGHT، SENT و DEAD؛
-- تلاش مجدد محدود با backoff؛
-- نگهداری رکوردهای موفق برای ۳۰ روز و حفظ رکوردهای DEAD برای بررسی؛
-- عدم ذخیره Bearer Token یا رمز عبور.
-
-در هر اجرا حداکثر ۲۵ تغییر نام دریافت می‌شود. worker هر پنج دقیقه اجرا می‌شود. در استقرار چندگرهی، تمام نودهای WSO2 باید از یک DataSource مشترک و پایدار استفاده کنند.
-
-### قرارداد Bulk چندعملیاتی
-
-هر تغییر، یک عملیات مستقل PATCH روی User موجود است. برای PATCH مستقل به کاربران موجود، bulkId لازم نیست. پاسخ هر عملیات جداگانه بررسی می‌شود؛ موفقیت HTTP کلی به معنی موفقیت همه عملیات نیست.
-
-- فقط عملیات موفق تأیید و از صف خارج می‌شود.
-- عملیات ناموفق با وضعیت و جزئیات خطای خودش باقی می‌ماند.
-- اگر نتیجه به علت قطع شبکه نامشخص باشد، مقدار جاری Stalwart خوانده می‌شود و سپس درباره تأیید یا retry تصمیم گرفته می‌شود؛ ارسال کورکورانه مجدد انجام نمی‌شود.
-- fallback به Individual فقط برای پاسخ قطعی عدم پشتیبانی endpoint یعنی HTTP 404، 405 یا 501 مجاز است.
+- اگر FIRSTNAME یا LASTNAME تغییر کرده باشد، کانکتور هر دو مقدار جاری را از UserStore می‌خواند و displayName را می‌سازد.
+- اگر DISPLAYNAME تغییر کرده باشد، مقدار جاری آن برای displayName استفاده می‌شود.
+- اگر تصویر کامل Claimها قابل دریافت نباشد، مقدار ناقص یا قدیمی ارسال نمی‌شود و خطای مشخص ثبت می‌شود.
+- در HYBRID، مقدار نهایی در Outbox پایدار ثبت و هر پنج دقیقه با Bulk PATCH ارسال می‌شود.
+- این خواندن از طریق RealmService استاندارد WSO2 انجام می‌شود؛ هیچ تنظیم دستی JVM یا Event Handler لازم نیست.
 
 ---
 
-## ۵. نگاشت Claimها
+## ۶. نگاشت Claimها
 
 | ویژگی | Claim پیش‌فرض WSO2 | مقصد Stalwart | سیاست |
 |---|---|---|---|
-| ایمیل اصلی | http://wso2.org/claims/emailaddress | userName | فقط هنگام ایجاد؛ تغییر بعدی نادیده گرفته می‌شود. |
-| شناسه داخلی | http://wso2.org/claims/username | externalId | هنگام ایجاد؛ پس از آن ثابت |
-| نام | http://wso2.org/claims/givenname | ورودی displayName | با تغییر Claim پردازش می‌شود. |
-| نام خانوادگی | http://wso2.org/claims/lastname | ورودی displayName | با تغییر Claim پردازش می‌شود. |
-| نام نمایشی | http://wso2.org/claims/displayname | displayName | با تغییر Claim پردازش می‌شود. |
-| وضعیت حساب | بدون مقدار پیش‌فرض | active | فقط در صورت پیکربندی Claim بولی |
-| عضویت Email | گروه Email | active | گروه SCIM ساخته یا همگام‌سازی نمی‌شود. |
+| ایمیل اصلی | http://wso2.org/claims/emailaddress | userName | فقط هنگام ایجاد |
+| شناسه داخلی | http://wso2.org/claims/username | externalId | شناسه پایدار؛ پس از ایجاد ثابت |
+| نام | http://wso2.org/claims/givenname | ورودی displayName | تغییر آن باعث به‌روزرسانی نام می‌شود |
+| نام خانوادگی | http://wso2.org/claims/lastname | ورودی displayName | تغییر آن باعث به‌روزرسانی نام می‌شود |
+| نام نمایشی | http://wso2.org/claims/displayname | displayName | مقدار جاری در صورت تغییر ارسال می‌شود |
+| وضعیت حساب | Claim بولی دلخواه | active | اختیاری |
+| عضویت Email | گروه WSO2 با نام Email | active | گروه SCIM ساخته نمی‌شود |
 
-در زمان ایجاد، فقط داده‌های موردنیاز ارسال می‌شوند: schema اصلی User، userName معتبر، externalId پایدار، displayName در صورت وجود و active در صورت پیکربندی. رمز عبور، تلفن، آدرس، عکس، Alias، گروه‌ها و Claimهای نامرتبط ارسال نمی‌شوند.
+در ایجاد User فقط فیلدهای موردنیاز ارسال می‌شوند: schema اصلی User، userName معتبر، externalId پایدار، displayName در صورت وجود و active در صورت پیکربندی. رمز عبور، تلفن، آدرس، عکس، Alias، گروه‌ها و Claimهای نامرتبط ارسال نمی‌شوند.
 
 ---
 
-## ۶. پیش‌نیازهای Stalwart
+## ۷. پیش‌نیازهای Stalwart
 
-1. نسخه Enterprise و مجوز معتبر Stalwart فعال باشد؛ SCIM قابلیت Enterprise است.
-2. دامنه ایمیل از قبل در Stalwart ساخته شده باشد.
-3. allowScimProvisioning=true برای دامنه فعال باشد.
-4. حساب اختصاصی Provisioning ساخته شود؛ از Administrator عمومی استفاده نکنید.
-5. حساب Provisioning در tenant/domain صحیح قرار داشته باشد.
-6. مجوزهای SCIM و مجوزهای لازم برای خواندن، ایجاد، به‌روزرسانی و حذف حساب‌های تحت مدیریت اعطا شود.
-7. برای حساب Provisioning یک API Key بسازید و آن را به‌عنوان Bearer Token در WSO2 قرار دهید.
-8. گواهی TLS توسط JVM مورد استفاده WSO2 مورد اعتماد باشد.
-9. اگر Stalwart پشت Reverse Proxy است، URL عمومی و مسیر SCIM از WSO2 قابل دسترسی باشند.
+1. Stalwart Enterprise با مجوز معتبر و قابلیت SCIM فعال باشد.
+2. دامنه ایمیل موردنظر از قبل در Stalwart ساخته شده باشد.
+3. اجازه SCIM Provisioning برای دامنه فعال باشد.
+4. یک حساب اختصاصی Provisioning با مجوزهای لازم ایجاد شود.
+5. برای حساب Provisioning یک API Key بسازید.
+6. گواهی TLS مقصد توسط JVM مورد استفاده WSO2 مورد اعتماد باشد.
+7. WSO2 به endpoint SCIM مقصد دسترسی شبکه داشته باشد.
 
 آدرس پایه نمونه:
 
 https://mail.example.com/scim/v2
 
-در Base URL فقط آدرس پایه را وارد کنید؛ /Users، /Groups یا /Bulk را اضافه نکنید.
+آدرس پایه باید به /scim/v2 ختم شود. مسیرهای /Users، /Groups و /Bulk را به انتهای مقدار UI اضافه نکنید.
 
-### بررسی endpoint
+### آزمون اولیه اتصال
 
 ~~~bash
 curl -i https://mail.example.com/scim/v2/ServiceProviderConfig
 ~~~
 
-بررسی احراز هویت:
+آزمون احراز هویت:
 
 ~~~bash
 curl -i \
@@ -170,235 +216,181 @@ curl -i \
   "https://mail.example.com/scim/v2/Users?count=1"
 ~~~
 
-دامنه و مجوز SCIM را قبل از اتصال WSO2 بررسی کنید. خطای دامنه ناموجود با تغییر کانکتور رفع نمی‌شود.
+اگر خطای 401 دریافت شد، Token و مجوزهای حساب Provisioning را بررسی کنید. اگر خطای domain does not exist دریافت شد، دامنه و tenant حساب Provisioning در Stalwart را بررسی کنید.
 
 ---
 
-## ۷. تنظیمات Connector در WSO2
+## ۸. تنظیمات UI در WSO2
 
-در WSO2 یک Outbound Provisioning Connection از نوع stalwart-scim بسازید.
+در WSO2 IS 7.3.0 یک Outbound Provisioning Connection از نوع stalwart-scim ایجاد کنید.
 
-| Property | مقدار پیش‌فرض | توضیح |
+| فیلد UI | مقدار پیش‌فرض | توضیح |
 |---|---|---|
-| scim-base-url | خالی/نمونه در UI | آدرس پایه SCIM که به /scim/v2 ختم می‌شود. |
-| scim-bearer-token | خالی | API Key حساب Provisioning در Stalwart؛ محرمانه نگهداری شود. |
-| scim-user-store-domain | خالی | دامنه UserStore در WSO2، در صورت نیاز برای نام‌های qualified. |
-| enable-claim-mapping | true | استفاده از نگاشت Claimهای WSO2. |
-| username-claim-uri | http://wso2.org/claims/emailaddress | Claim ایمیل اصلی؛ فقط برای ایجاد userName اولیه. |
-| external-id-claim-uri | http://wso2.org/claims/username | Claim شناسه پایدار که در externalId قرار می‌گیرد. |
-| given-name-claim-uri | http://wso2.org/claims/givenname | Claim نام. |
-| family-name-claim-uri | http://wso2.org/claims/lastname | Claim نام خانوادگی. |
-| display-name-claim-uri | http://wso2.org/claims/displayname | Claim نام نمایشی. |
-| enable-profile-updates | true | فعال‌بودن همگام‌سازی نام نمایشی؛ در HYBRID باید true باشد. |
-| profile-update-scim-url | خالی | endpoint پایه جایگزین برای PATCH پروفایل؛ در حالت عادی خالی بماند. |
-| max-concurrent-requests | 8 | حداکثر درخواست هم‌زمان؛ بازه ۱ تا ۶۴. |
-| active-claim-uri | خالی | Claim بولی وضعیت حساب؛ در صورت خالی بودن از این Claim استفاده نمی‌شود. |
-| invert-active-claim | false | معکوس‌کردن مقدار Claim؛ مناسب Claimهایی مانند accountDisabled. |
-| email-membership-group | Email | گروه WSO2 که دسترسی ایمیل را اعطا می‌کند. |
-| provisioning-mode | INDIVIDUAL | یکی از INDIVIDUAL، BULK یا HYBRID. |
-| bulk-fallback-to-individual | true | fallback فقط برای پاسخ قطعی 404/405/501 از Bulk. |
-| bulk-request-timeout-ms | 30000 | مهلت درخواست Bulk؛ بازه ۱۰۰۰ تا ۱۲۰۰۰۰ میلی‌ثانیه. |
-| bulk-max-payload-bytes | 900000 | حداکثر اندازه بدنه Bulk؛ بازه ۱۰۲۴ تا ۱۰۴۸۵۷۶ بایت. |
-| hybrid-outbox-jndi-name | jdbc/WSO2CarbonDB | نام JNDI دیتاسورس پایدار صف HYBRID. |
-| hybrid-scope-id | خالی | شناسه جداسازی صف بر اساس مقصد، سازمان، tenant و user store. |
+| Stalwart SCIM Base URL | خالی/نمونه در UI | آدرس پایه با انتهای /scim/v2 |
+| Stalwart SCIM Bearer Token | خالی | API Key حساب Provisioning در Stalwart |
+| User Store Domain | خالی | دامنه UserStore در WSO2، در صورت نیاز |
+| Enable Claim Mapping | true | استفاده از نگاشت Claimهای WSO2 |
+| userName source WSO2 local claim URI | emailaddress | Claim ایمیل اصلی؛ فقط برای ایجاد |
+| Required immutable externalId source WSO2 local claim URI | username | Claim شناسه پایدار |
+| name.givenName source WSO2 local claim URI | givenname | Claim نام |
+| name.familyName source WSO2 local claim URI | lastname | Claim نام خانوادگی |
+| displayName source WSO2 local claim URI | displayname | Claim نام نمایشی |
+| Enable Profile Updates | true | فعال‌بودن همگام‌سازی نام |
+| Profile Update SCIM URL | خالی | endpoint جایگزین اختیاری؛ در حالت عادی خالی |
+| Maximum Concurrent SCIM Requests | 8 | حداکثر درخواست هم‌زمان |
+| active source WSO2 local Boolean claim URI | خالی | Claim اختیاری وضعیت حساب |
+| Invert active source value | false | معکوس‌کردن Claimهایی مانند accountDisabled |
+| WSO2 group that grants email access | Email | گروه مجوزدهی ایمیل |
+| Provisioning Mode | INDIVIDUAL | یکی از INDIVIDUAL، BULK یا HYBRID |
+| Fallback to Individual if Bulk endpoint is unavailable | true | fallback فقط در پاسخ قطعی عدم پشتیبانی Bulk |
+| Bulk request timeout | 30000 ms | مهلت درخواست Bulk |
+| Bulk maximum payload size | 900000 bytes | سقف بدنه درخواست Bulk |
 
-### تنظیم پیشنهادی HYBRID
+تنظیمات Outbox، JNDI، Scope و زمان‌بندی در UI نمایش داده نمی‌شوند؛ کانکتور از DataSource استاندارد WSO2 استفاده می‌کند.
 
-- provisioning-mode=HYBRID
-- enable-profile-updates=true
-- hybrid-outbox-jndi-name=jdbc/WSO2CarbonDB
-- hybrid-scope-id به شکل targetId|tenantDomain|userStoreDomain
+### پیشنهاد انتخاب حالت
 
-اگر رویداد WSO2 شناسه سازمان را فراهم کند:
-
-targetId|organizationId|tenantDomain|userStoreDomain
-
-targetId باید با JVM property مربوطه یکسان و برای هر endpoint مقصد یکتا باشد.
+- اگر اجرای هم‌زمان و فوری برایتان اولویت دارد و صف پایدار لازم ندارید: INDIVIDUAL.
+- اگر می‌خواهید همه تغییرات در صف پایدار ثبت شوند و با Bulk چندعملیاتی ارسال شوند: BULK.
+- اگر ایجاد کاربر و تغییر وضعیت/گروه فوری باشد ولی تغییر نام هر پنج دقیقه تجمیع شود: HYBRID.
 
 ---
 
-## ۸. تنظیم JVM و Event Handler
+## ۹. نصب نسخه 2.0.5 روی WSO2 IS 7.3.0
 
-برای فعال‌سازی HYBRID این JVM propertyها را به تنظیمات راه‌اندازی WSO2 اضافه کنید:
+### نصب جدید یا ارتقا از 2.0.4
 
-~~~text
--Dstalwart.scim.hybrid.enabled=true
--Dstalwart.scim.hybrid.outbox.jndi=jdbc/WSO2CarbonDB
--Dstalwart.scim.hybrid.target-id=email.irisadc.ir
-~~~
-
-target-id را متناسب با endpoint واقعی تغییر دهید. مقدار JNDI باید با hybrid-outbox-jndi-name برابر باشد.
-
-در repository/conf/deployment.toml:
-
-~~~toml
-[[event_handler]]
-name = "stalwart.scim.profile.observer"
-subscriptions = ["POST_ADD_USER", "POST_SET_USER_CLAIMS"]
-~~~
-
-- POST_ADD_USER برای مشاهده رویداد ایجاد است؛ ایجاد Stalwart از مسیر Outbound Connector انجام می‌شود.
-- POST_SET_USER_CLAIMS تغییر FIRSTNAME/LASTNAME/DISPLAYNAME را تشخیص داده و تصویر کامل نام را در Outbox ثبت می‌کند.
-- تغییر ایمیل اصلی، Alias و username داخلی نباید در صف نام قرار گیرد.
-
-اگر URI سفارشی Claim استفاده می‌کنید، JVM property متناظر externalId، given name، family name و displayName نیز باید با نگاشت اتصال برابر باشد. عدم تطابق باعث رد راه‌اندازی HYBRID می‌شود.
-
-**محدودیت CSV:** رفتار CSV import باید روی WSO2 IS 7.3.0 و مسیر واردسازی واقعی آزمایش شود. تا زمانی که انتشار رویداد مناسب و جلوگیری از رویداد تکراری اثبات نشده، پوشش کامل HYBRID برای CSV تضمین‌شده نیست.
-
----
-
-## ۹. ساخت و نصب
-
-### پیش‌نیاز Build
-
-- JDK 21
-- Apache Maven
-- دسترسی به Maven Central و مخزن عمومی Maven مربوط به WSO2
-
-### ساخت
-
-~~~bash
-mvn -U clean verify
-~~~
-
-پروژه دو ماژول دارد:
-- org.stalwart.identity.provisioning.connector.scim
-- org.stalwart.identity.provisioning.event.handler
-
-خروجی JAR در پوشه target هر ماژول ساخته می‌شود. نسخه Maven شاخه توسعه 2.0.4-SNAPSHOT است.
-
-### نصب در WSO2 IS 7.3.0
-
-1. JAR کانکتور و JAR مربوط به Event Handler را از Build موفق دریافت کنید.
-2. هر دو JAR را در مسیر زیر قرار دهید:
+1. فایل JAR نسخه 2.0.5 را از Artifact مربوط به GitHub Actions دریافت کنید.
+2. فقط همین JAR را در مسیر زیر قرار دهید:
 
    <WSO2_HOME>/repository/components/dropins/
 
-3. JVM propertyهای لازم را اضافه کنید.
-4. تنظیم deployment.toml مربوط به Event Handler را اعمال کنید.
-5. WSO2 را restart کنید.
-6. لاگ‌های OSGi را بررسی کنید تا هر دو bundle بدون خطای resolution فعال شوند.
-7. در کنسول WSO2 بررسی کنید نوع stalwart-scim در فهرست Connectorها دیده شود.
-8. ابتدا در محیط آزمایشی ساخت کاربر، تغییر نام، وضعیت حساب و عضویت گروه را جداگانه آزمایش کنید.
+3. اگر نسخه 2.0.4 را نصب کرده‌اید، JAR جداگانه Event Handler نسخه قبلی را از dropins خارج کنید.
+4. اگر قبلاً بخش Event Handler مربوط به Stalwart را به deployment.toml اضافه کرده‌اید، آن بخش را حذف کنید.
+5. JVM Propertyهای قبلی با پیشوند stalwart.scim.hybrid دیگر موردنیاز نیستند و می‌توانید آن‌ها را از تنظیمات راه‌اندازی حذف کنید.
+6. WSO2 را restart کنید.
+7. لاگ را بررسی کنید تا پیام فعال‌شدن Connector و ثبت Factory نمایش داده شود.
+8. در UI یک اتصال جدید یا اتصال موجود را با نوع stalwart-scim پیکربندی کنید.
+9. حالت Provisioning موردنظر را انتخاب و اتصال را فعال کنید.
 
-در Docker نیز JARها باید در مسیر dropins داخل کانتینر WSO2 قرار گیرند و کانتینر با تنظیمات صحیح restart شود. مسیر WSO2_HOME را با نسخه نصب‌شده تطبیق دهید.
+**در نسخه 2.0.5 هیچ JAR جداگانه‌ای برای Event Handler وجود ندارد و نباید نصب شود.**
 
----
+### Build از Source
 
-## ۱۰. امنیت و مدیریت خطا
+پیش‌نیازها:
+- JDK 21
+- Apache Maven
+- دسترسی به مخازن Maven عمومی WSO2
 
-- Bearer Token نباید در لاگ یا Outbox ذخیره شود.
-- Claim value، رمز عبور و اطلاعات کامل کاربر نباید در لاگ چاپ شوند.
-- از HTTPS استفاده کنید و گواهی مقصد را در JVM معتبر کنید.
-- فیلترهای SCIM باید escape و پارامترهای URL encode شوند.
-- cache شناسه‌ها محدود به endpoint و نوع منبع است و عمر محدود دارد.
-- تعداد درخواست‌های هم‌زمان محدود است.
-- پاسخ هر عملیات Bulk جداگانه ارزیابی می‌شود.
-- HTTP 401 معمولاً به Token یا مجوز حساب SCIM مربوط است.
-- HTTP 404 با پیام domain does not exist به دامنه یا tenant در Stalwart مربوط است.
-- HTTP 409 فقط در صورت تطابق دقیق externalId قابل reconcile است؛ حساب متعلق به شناسه دیگر تصاحب نمی‌شود.
-- خطای مبهم شبکه نباید باعث تکرار کورکورانه POST یا Bulk شود.
-- حذف کاربر با غیرفعال‌سازی حساب یکسان نیست؛ DELETE ممکن است حذف داده‌های حساب را زمان‌بندی کند.
+ساخت:
 
----
+~~~bash
+mvn -B -ntp clean verify
+~~~
 
-## ۱۱. آزمون و معیار پذیرش
+JAR قابل نصب در مسیر زیر تولید می‌شود:
 
-آزمون‌های کد باید این موارد را پوشش دهند:
+components/org.stalwart.identity.provisioning.connector.scim/target/org.stalwart.identity.provisioning.connector.scim-2.0.5-SNAPSHOT.jar
 
-1. نوع Connector و ۲۱ فیلد تنظیمات UI؛
-2. انگلیسی‌بودن توضیحات فیلدهای UI؛
-3. عدم ارسال درخواست برای تغییر ایمیل اصلی، Alias، اضافه/حذف Alias و username داخلی؛
-4. ساخت حساب با userName و externalId صحیح؛
-5. عدم تغییر userName و externalId در Update؛
-6. OR بودن شرط تغییر FIRSTNAME/LASTNAME/DISPLAYNAME؛
-7. ساخت displayName از تصویر کامل Claimها؛
-8. تجمیع تغییرات یک کاربر در Outbox؛
-9. اجرای worker هر پنج دقیقه و ارسال چند PATCH در یک Bulk؛
-10. بررسی جداگانه نتیجه هر عملیات Bulk؛
-11. بازیابی امن پس از نتیجه مبهم شبکه؛
-12. جداسازی scope و جلوگیری از claim هم‌زمان یک رکورد توسط دو worker؛
-13. اعمال فوری active و عضویت گروه؛
-14. عدم ساخت گروه Email در Stalwart؛
-15. جلوگیری از ایجاد حساب تکراری با externalId متفاوت.
-
-### آزمون‌های یکپارچه‌سازی واقعی
-
-موفقیت Build یا Smoke Test جایگزین آزمون واقعی WSO2 و Stalwart نیست. موارد زیر باید در محیط واقعی بررسی شوند:
-
-- فعال‌شدن bundleها و OSGi Declarative Services؛
-- تحویل واقعی POST_SET_USER_CLAIMS و POST_ADD_USER؛
-- رفتار CSV import؛
-- اتصال JNDI به پایگاه داده واقعی WSO2؛
-- قفل‌گذاری و بازیابی Outbox در چند نود؛
-- مجوزها، tenant/domain و endpoint واقعی Stalwart؛
-- Bulk PATCH، ETag، خطاهای جزئی و محدودیت اندازه درخواست.
-
-تا انجام این آزمون‌ها، نسخه 2.0.4 یک نسخه توسعه است و نباید به‌عنوان انتشار تولیدی تأییدشده معرفی شود.
+فقط همین JAR را در WSO2 نصب کنید.
 
 ---
 
-## ۱۲. عیب‌یابی
+## ۱۰. امنیت و نگهداری
+
+- از HTTPS استفاده کنید و اعتبار گواهی TLS را غیرفعال نکنید.
+- Bearer Token در Outbox ذخیره نمی‌شود.
+- Payloadهای صف ممکن است شامل نام یا سایر اطلاعات پروفایل باشند؛ دسترسی به دیتابیس WSO2 را محدود کنید.
+- دسترسی به جدول Outbox را فقط برای حساب دیتابیس WSO2 و مدیران مجاز فراهم کنید.
+- از ثبت Token، رمز عبور یا کل Claimهای کاربر در لاگ خودداری می‌شود.
+- دیتابیس WSO2 و Volume آن باید روی ذخیره‌ساز پایدار باشند.
+- در محیط کلاستر، DataSource مشترک و پایدار برای همه نودها لازم است.
+
+---
+
+## ۱۱. عیب‌یابی
 
 | خطا یا نشانه | علت محتمل | اقدام |
 |---|---|---|
-| A full email address is required | Claim ایمیل در رویداد ایجاد موجود نیست یا نگاشت اشتباه است | Claim ایمیل را در مسیر ایجاد بررسی کنید؛ تغییر ایمیل نباید POST ایجاد کند. |
-| HTTP 401 | Token نامعتبر یا مجوز ناکافی | API Key، نقش‌ها و مجوزهای SCIM را بررسی کنید. |
-| HTTP 404 و domain does not exist | دامنه در Stalwart ساخته نشده یا tenant نادرست است | دامنه و tenant حساب Provisioning را بررسی کنید. |
-| HTTP 409 userName already exists | userName متعلق به externalId دیگری است یا reconcile شناسه پایدار موفق نشده | منبع موجود و externalId آن را بررسی کنید؛ حساب متعلق به کاربر دیگر نباید تصاحب شود. |
-| خطای Bulk درباره bulkId | عملیات POST در Bulk فاقد bulkId است | برای POSTهای Bulk، bulkId لازم است؛ PATCH مستقل به User موجود به آن نیاز ندارد. |
-| تغییر نام در صف باقی می‌ماند | رویداد یا تصویر کامل Claimها موجود نیست، دیتاسورس در دسترس نیست یا کاربر در Stalwart پیدا نمی‌شود | لاگ Handler و وضعیت Outbox را بررسی کنید؛ اطلاعات حساس را منتشر نکنید. |
-| bundle فعال نمی‌شود | import package یا نسخه API با WSO2 سازگار نیست | خطای OSGi را بررسی و build را با WSO2 IS 7.3.0 تطبیق دهید. |
-| تغییر ایمیل یا username اثری در Stalwart ندارد | رفتار مورد انتظار نسخه 2.0.4 | این تغییرات عمداً همگام‌سازی نمی‌شوند. |
+| Connector در UI نمایش داده نمی‌شود | Bundle نصب نشده یا OSGi آن فعال نشده | مسیر dropins، لاگ OSGi و Import-Package را بررسی کنید. |
+| خطای RealmService یا UserRealm | سرویس UserStore در OSGi در دسترس نیست یا tenant context وجود ندارد | وضعیت RealmService و لاگ زمان Provisioning را بررسی کنید. |
+| FIRSTNAME/LASTNAME به‌روزرسانی نمی‌شود | خواندن Claim کامل از UserStore ممکن نیست یا Claim URI اشتباه است | URIهای Claim و دسترسی UserStore را بررسی کنید. |
+| خطای JNDI یا DataSource در حالت BULK/HYBRID | DataSource پیش‌فرض WSO2 در دسترس نیست | وجود jdbc/WSO2CarbonDB را در WSO2 بررسی کنید. |
+| عملیات در صف باقی مانده است | Stalwart در دسترس نیست، مجوز کافی نیست یا خطای موقت رخ داده | وضعیت صف، زمان تلاش بعدی و خطای آخر را بررسی کنید. |
+| عملیات در DEAD است | خطای دائمی یا پایان ۲۰ تلاش | مقدار LAST_ERROR و پاسخ SCIM را بررسی و پس از رفع علت، عملیات را طبق رویه عملیاتی مجدداً ثبت کنید. |
+| HTTP 401 | Bearer Token یا مجوز ناکافی | API Key و مجوزهای حساب Provisioning را بررسی کنید. |
+| HTTP 404 و domain does not exist | دامنه در Stalwart موجود نیست یا tenant اشتباه است | دامنه و tenant را بررسی کنید. |
+| HTTP 409 userName already exists | userName متعلق به externalId دیگری است | حساب را بررسی کنید؛ کانکتور اجازه تصاحب حساب با externalId متفاوت را نمی‌دهد. |
+| خطای Bulk و fallback | endpoint Bulk پشتیبانی نمی‌شود | در صورت فعال بودن fallback، همان رکوردهای پایدار از endpointهای Individual ارسال می‌شوند. |
+| پس از restart صف پردازش نمی‌شود | Connector هنوز مقداردهی نشده، DataSource در دسترس نیست یا دیتابیس/Volume پایدار نیست | اتصال Provisioning، JNDI و محل ذخیره دیتابیس را بررسی کنید. |
 
 ---
 
-## ۱۳. موارد خارج از دامنه
+## ۱۲. آزمون‌های پذیرش
 
-این کانکتور موارد زیر را انجام نمی‌دهد:
-- همگام‌سازی تغییر آدرس اصلی ایمیل پس از ایجاد؛
-- همگام‌سازی Alias، افزودن یا حذف آن؛
-- همگام‌سازی تغییر username داخلی WSO2؛
-- تغییر userName یا externalId موجود در Stalwart؛
-- ایجاد یا حذف گروه‌های Stalwart بر اساس چرخه عمر گروه‌های WSO2؛
-- همگام‌سازی رمز عبور؛
-- ارسال تلفن، آدرس، عکس، locale، timezone یا Claimهای دلخواه؛
-- تضمین پشتیبانی CSV import بدون آزمون واقعی مسیر واردسازی WSO2؛
-- تضمین موفقیت عملیاتی Stalwart صرفاً بر اساس موفقیت Build.
+### آزمون‌های خودکار CI
 
----
+- ساخت Maven و OSGi Bundle با JDK 21؛
+- بررسی نسخه Bundle و Declarative Services؛
+- بررسی تعداد و توضیحات انگلیسی ۱۹ فیلد UI؛
+- بررسی انتقال Bulk POST و وجود bulkId؛
+- بازیابی رکورد صف پس از ایجاد مجدد Outbox؛
+- ارسال چند عملیات صف‌شده در یک درخواست Bulk؛
+- بررسی تأیید جداگانه هر Operation؛
+- بررسی صف HYBRID و Bulk PATCH چندعملیاتی؛
+- بررسی عدم ارسال درخواست برای تغییر ایمیل اصلی، Alias و username داخلی.
 
-## ۱۴. تاریخچه نسخه
+### آزمون‌های واقعی که پیش از Production لازم‌اند
 
-### نسخه 2.0.4
-- تعریف صریح عدم همگام‌سازی ایمیل اصلی، Aliasها و username داخلی WSO2؛
-- خروج زودهنگام از مسیر Update برای رویدادهایی که تغییر مجاز برای Stalwart ندارند؛
-- افزودن Smoke Test برای رویدادهای ایمیل، Alias و username؛
-- انگلیسی‌سازی توضیحات تمام فیلدهای ورودی Connector در UI؛
-- هم‌راستاسازی نسخه Maven و metadata ماژول‌ها با 2.0.4؛
-- تکمیل مستندات فارسی رفتار، تنظیمات، صف و حالت‌های ارسال.
+Build و Smoke Test جایگزین اجرای واقعی روی WSO2 و Stalwart نیستند. پیش از Production این موارد باید روی WSO2 IS 7.3.0 و Stalwart Enterprise واقعی آزمایش شوند:
 
-### نسخه 2.0.3
-- معرفی حالت HYBRID؛
-- صف پایدار JDBC برای تغییرات نام؛
-- تجمیع تغییرات و ارسال Bulk چندعملیاتی هر پنج دقیقه؛
-- Event Handler برای خواندن تصویر کامل Claimهای WSO2؛
-- retry، lease، dead-letter و بررسی نتیجه عملیات Bulk.
+1. فعال‌شدن Bundle و تزریق RealmService در OSGi؛
+2. دریافت Claimهای جاری FIRSTNAME/LASTNAME از UserStore برای کاربران PRIMARY و UserStoreهای ثانویه؛
+3. اجرای ایجاد، Update، گروه و حذف در هر سه حالت؛
+4. قطع Stalwart پس از ثبت عملیات و مشاهده باقی‌ماندن آن در Outbox؛
+5. خاموش و روشن کردن WSO2 و مشاهده ادامه پردازش رکوردها؛
+6. قطع شبکه پس از ارسال Bulk و بررسی reconcile عملیات POST؛
+7. اجرای Bulk با چند Operation و بررسی پاسخ‌های جزئی؛
+8. بررسی پایداری دیتابیس و Volume در محیط واقعی Docker/VM؛
+9. بررسی رفتار CSV Import از مسیر واقعی WSO2؛
+10. تست چندنودی در صورت استفاده از Cluster.
 
-### نسخه 2.0.2
-- افزودن انتقال هم‌زمان عملیات از endpoint استاندارد SCIM Bulk؛
-- حفظ رفتار پیش‌فرض INDIVIDUAL؛
-- بررسی وضعیت هر عملیات در پاسخ Bulk و جلوگیری از retry کورکورانه.
-
-### نسخه 2.0.1
-- تثبیت سیاست externalId و userName؛
-- استفاده از externalId به‌عنوان شناسه پایدار؛
-- تکمیل منطق provisioning و فعال/غیرفعال‌سازی حساب.
+تا پایان این آزمون‌ها، نسخه 2.0.5 باید نسخه توسعه تلقی شود، نه انتشار Production تأییدشده.
 
 ---
 
-## ۱۵. مخزن و مجوز
+## ۱۳. تاریخچه نسخه‌ها
+
+### 2.0.5
+- حذف Event Handler جداگانه و تمام نیازمندی‌های JVM Property؛
+- خواندن Claimهای جاری WSO2 از طریق RealmService داخل همان Connector Bundle؛
+- افزودن Outbox پایدار برای تمام عملیات تغییردهنده در حالت BULK؛
+- بازیابی عملیات پس از restart و پردازش دوره‌ای صف؛
+- ارسال چند عملیات در یک Bulk Request و بررسی نتیجه هر عملیات؛
+- استفاده خودکار از jdbc/WSO2CarbonDB؛
+- حذف تنظیمات JNDI و Scope از UI؛
+- تولید فقط یک JAR قابل نصب؛
+- بازنویسی مستندات فارسی و جدول رفتار نهایی.
+
+### 2.0.4
+- عدم همگام‌سازی تغییر ایمیل اصلی، Alias، افزودن/حذف Alias و username داخلی WSO2؛
+- تغییرات نام در حالت HYBRID با صف پایدار؛
+- انگلیسی‌سازی توضیحات فیلدهای UI.
+
+### 2.0.3
+- معرفی HYBRID و صف JDBC برای تغییرات نام؛
+- تجمیع PATCHهای نام در Bulk چندعملیاتی.
+
+### 2.0.2
+- پشتیبانی از SCIM Bulk برای عملیات provisioning.
+
+### 2.0.1
+- تثبیت نگاشت externalId و userName و منطق پایه provisioning.
+
+---
+
+## ۱۴. مخزن و مجوز
 
 مخزن پروژه: https://github.com/hsaeidh/stalwart-scim-connector
 
-مجوز پروژه Apache License 2.0 است.
+مجوز: Apache License 2.0
