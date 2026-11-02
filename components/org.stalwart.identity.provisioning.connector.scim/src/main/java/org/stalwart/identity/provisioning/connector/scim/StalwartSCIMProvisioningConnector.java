@@ -212,12 +212,12 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
         if ("HYBRID".equals(provisioningMode) || "BULK".equals(provisioningMode)) {
             try {
                 hybridScopeId = buildOutboxScope(baseUrl, userStoreDomainName, bearerToken);
-                hybridProfileOutbox = HybridProfileOutbox.lookup(hybridOutboxJndiName);
                 if ("BULK".equals(provisioningMode)) {
                     scimOperationOutbox = ScimOperationOutbox.lookup(hybridOutboxJndiName);
                     scimOperationScope = hybridScopeId;
                     registerBulkWorker();
                 } else {
+                    hybridProfileOutbox = HybridProfileOutbox.lookup(hybridOutboxJndiName);
                     registerHybridWorker();
                 }
             } catch (Exception e) {
@@ -229,8 +229,18 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
     }
 
     private String buildOutboxScope(String endpoint, String userStoreDomain, String token) {
-        String tokenFingerprint = Integer.toHexString(StringUtils.defaultString(token).hashCode());
-        return endpoint + "|" + StringUtils.defaultIfBlank(userStoreDomain, "PRIMARY") + "|" + tokenFingerprint;
+        String scopeMaterial = String.join("|", StringUtils.defaultString(endpoint),
+                StringUtils.defaultString(profileUpdateScimUrl),
+                StringUtils.defaultIfBlank(userStoreDomain, "PRIMARY"), StringUtils.defaultString(token));
+        try {
+            byte[] digest = java.security.MessageDigest.getInstance("SHA-256")
+                    .digest(scopeMaterial.getBytes(StandardCharsets.UTF_8));
+            StringBuilder scope = new StringBuilder("SCIM-");
+            for (byte value : digest) scope.append(String.format("%02x", value));
+            return scope.toString();
+        } catch (java.security.NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 is required for durable outbox scope isolation.", e);
+        }
     }
 
     private void registerHybridWorker() {
