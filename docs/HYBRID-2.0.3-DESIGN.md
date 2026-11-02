@@ -1,106 +1,185 @@
-# Hybrid provisioning and SCIM payload contract (2.0.3)
+# طراحی و قرارداد رفتاری کانکتور Stalwart SCIM — نسخه 2.0.4
 
-## Status
+## وضعیت سند
 
-The 2.0.3 branch now contains the first implementation of HYBRID mode: immediate Individual creation, a separate WSO2 event-handler bundle that reads the complete current name snapshot, a JDBC durable outbox, five-minute scheduling, multi-operation Bulk PATCH, per-operation results, retry/dead-letter handling, and ambiguous-outcome reconciliation. The Java build and H2 outbox tests are being validated in CI. OSGi resolution, actual event delivery, CSV import behavior, multi-node behavior on the production database, and live Stalwart Enterprise interoperability remain unverified; therefore this is still a development snapshot, not a production release.
+این سند قرارداد فنی و رفتاری نسخه 2.0.4 را تعریف می‌کند. شاخه توسعه از نسخه 2.0.3 منشعب شده و سیاست عدم همگام‌سازی ایمیل اصلی، Aliasها و username داخلی WSO2 را صریح می‌کند. نسخه Maven در این شاخه 2.0.4-SNAPSHOT است.
 
-## Compatibility and modes
+موفقیت آزمون‌های CI فقط صحت Build و آزمون‌های خودکار موجود را نشان می‌دهد. فعال‌سازی OSGi، رویدادهای واقعی WSO2 IS 7.3.0، مسیر CSV import، دیتابیس عملیاتی چندگرهی و ارتباط زنده با Stalwart باید جداگانه آزمایش شوند.
 
-- `INDIVIDUAL` remains the default and must preserve the 2.0.1/2.0.2 synchronous behavior.
-- `BULK` remains the existing synchronous one-operation Bulk transport mode.
-- `HYBRID` is a separate opt-in mode. It is not an alias for `BULK`.
-- In `HYBRID`, user creation is synchronous and Individual. Profile changes are coalesced in a durable outbox and flushed in multi-operation SCIM Bulk requests every five minutes. Non-profile mutations (active state, Email entitlement, distribution-group membership, deletion) retain their existing synchronous semantics unless a separately reviewed change explicitly says otherwise.
-- A create must not be acknowledged until Stalwart has confirmed it or a safe reconciliation has proven that the same stable `externalId` already exists.
+## ۱. اصول طراحی
 
-## Event ingress and duplicate prevention
+1. externalId شناسه پایدار اتصال WSO2 و Stalwart است.
+2. userName در Stalwart فقط در زمان ایجاد حساب از Claim ایمیل اصلی گرفته می‌شود.
+3. userName و externalId در هیچ عملیات Update تغییر داده نمی‌شوند.
+4. تغییر ایمیل اصلی، Alias، افزودن/حذف Alias و تغییر username داخلی WSO2 هیچ درخواست SCIM و هیچ ورودی صف ایجاد نمی‌کند.
+5. تنها تغییرات مجاز نام، وضعیت حساب، عضویت گروه توزیع و حذف کاربر به Stalwart منتقل می‌شوند.
+6. گروه Email یک گروه مجوزدهی در WSO2 است و در Stalwart به‌عنوان Group SCIM ساخته یا نگهداری نمی‌شود؛ این گروه فقط active را کنترل می‌کند.
+7. تغییرات نام در HYBRID از صف پایدار JDBC و Bulk چندعملیاتی عبور می‌کنند؛ سایر عملیات در همان لحظه و به‌صورت مستقل انجام می‌شوند.
+8. رمز عبور و Claimهای نامرتبط ارسال نمی‌شوند.
 
-WSO2 event subscriptions are `POST_ADD_USER` and `POST_SET_USER_CLAIMS`. The separate event-handler bundle registers an `AbstractEventHandler` through OSGi Declarative Services. For `POST_SET_USER_CLAIMS`, it identifies changed name claims from `USER_CLAIMS`, reads the complete current FIRSTNAME/LASTNAME/DISPLAYNAME/externalId snapshot through the supplied user-store manager, and enqueues the authoritative displayName. DISPLAYNAME change has priority; otherwise a FIRSTNAME or LASTNAME change composes from both current name parts. The handler never calls Stalwart directly and never logs claim values, passwords, tokens, or full user records.
+## ۲. حالت‌های انتقال
 
-In HYBRID mode, the outbound connector suppresses its synchronous profile PATCH path; the event handler is the single profile ingress. User creation remains immediate through the connector. Active state, Email entitlement, distribution-group membership, and deletion remain synchronous. This prevents duplicate profile writes. CSV import behavior must be verified before release; if CSV does not emit POST_SET_USER_CLAIMS, HYBRID must not be enabled for that import path until a supported fallback ingress is implemented.
+| حالت | ساخت کاربر | تغییر نام | active | عضویت گروه توزیع | حذف |
+|---|---|---|---|---|---|
+| INDIVIDUAL | POST فوری | PATCH فوری | PATCH فوری | PATCH فوری | DELETE فوری |
+| BULK | Bulk تک‌عملیاتی فوری | Bulk تک‌عملیاتی PATCH | Bulk تک‌عملیاتی PATCH | Bulk تک‌عملیاتی PATCH | Bulk تک‌عملیاتی DELETE |
+| HYBRID | POST مستقل فوری | Outbox و Bulk چندعملیاتی هر ۵ دقیقه | PATCH مستقل فوری | PATCH مستقل فوری | DELETE مستقل فوری |
 
-The event handler and provisioning connector are separate bundles. The event handler writes to the same JDBC outbox table used by the connector's scheduler. Its scope is `targetId|tenantDomain|userStoreDomain`, or `targetId|organizationId|tenantDomain|userStoreDomain` when the event exposes organization context. `targetId` is set by JVM property `stalwart.scim.hybrid.target-id` and must be unique per Stalwart endpoint.
+BULK در این نسخه انتقال هم‌زمان یک عملیات از طریق Bulk endpoint است و به‌معنای صف‌سازی بین رویدادهای مستقل WSO2 نیست. HYBRID تنها حالت دارای صف و تجمیع چند رویداد است.
 
-## Durable queue requirements
+## ۳. جدول قرارداد نهایی رویدادها
 
-An in-memory queue is prohibited. The branch implements a JDBC outbox table named `STALWART_SCIM_PROFILE_OUTBOX`, created on first use through the configured JNDI DataSource (default `jdbc/WSO2CarbonDB`). The same shared database must be used by every WSO2 node.
+| رویداد WSO2 | عملیات Stalwart | زمان/روش | صف HYBRID |
+|---|---|---|---|
+| ایجاد کاربر | POST User با userName اولیه و externalId پایدار | فوری؛ INDIVIDUAL در INDIVIDUAL/HYBRID و Bulk تک‌عملیاتی در BULK | خیر |
+| تغییر FIRSTNAME | PATCH displayName | فوری در INDIVIDUAL/BULK؛ دسته‌ای هر ۵ دقیقه در HYBRID | بله |
+| تغییر LASTNAME | PATCH displayName | فوری در INDIVIDUAL/BULK؛ دسته‌ای هر ۵ دقیقه در HYBRID | بله |
+| تغییر DISPLAYNAME | PATCH displayName | فوری در INDIVIDUAL/BULK؛ دسته‌ای هر ۵ دقیقه در HYBRID | بله |
+| تغییر آدرس اصلی ایمیل | هیچ | هیچ درخواست SCIM | خیر |
+| تغییر Alias | هیچ | هیچ درخواست SCIM | خیر |
+| افزودن Alias | هیچ | هیچ درخواست SCIM | خیر |
+| حذف Alias | هیچ | هیچ درخواست SCIM | خیر |
+| تغییر username داخلی WSO2 | هیچ | هیچ درخواست SCIM | خیر |
+| افزودن به گروه Email | PATCH active=true | فوری | خیر |
+| حذف از گروه Email | PATCH active=false | فوری | خیر |
+| تغییر Claim فعال | PATCH active | فوری | خیر |
+| افزودن عضویت گروه توزیع | PATCH Group.members با add | فوری | خیر |
+| حذف عضویت گروه توزیع | PATCH Group.members با remove | فوری | خیر |
+| تغییر خود گروه WSO2 | هیچ | هیچ درخواست گروهی | خیر |
+| حذف کاربر | DELETE User | فوری | خیر |
+| تغییر رمز عبور | هیچ | هیچ درخواست SCIM | خیر |
 
-The implementation provides:
-- atomic enqueue/coalesce in a transaction, keyed by SHA-256(scope + externalId);
-- source priority so a full event-derived snapshot cannot be overwritten by a lower-priority partial connector callback;
-- `SELECT ... FOR UPDATE` row claims with owner and lease expiry;
-- durable PENDING, IN_FLIGHT, SENT and DEAD states;
-- bounded exponential retry and a ten-attempt dead-letter threshold;
-- scope isolation by target ID, organization when available, tenant domain, user-store domain, and immutable externalId;
-- no Stalwart credentials or bearer tokens stored in the outbox;
-- no in-memory queue as the source of truth.
+در حالت BULK، عملیات فوری بالا در قالب Bulk تک‌عملیاتی ارسال می‌شوند. در حالت HYBRID، فقط سه ردیف تغییر نام در صف قرار می‌گیرند.
 
-The scheduler runs every five minutes and claims at most 25 entries per pass. H2 tests cover coalescing, lease exclusion and terminal retry state. Production DB dialect, cluster locking and restart recovery still require validation on the actual WSO2CarbonDB backend. Configure `-Dstalwart.scim.hybrid.enabled=true`, `-Dstalwart.scim.hybrid.outbox.jndi=jdbc/WSO2CarbonDB`, and a unique `-Dstalwart.scim.hybrid.target-id` only after the event handler is installed and tested.
+### تضمین no-op برای رویدادهای هویتی و ایمیل
 
-## SCIM User payload contract
+در مسیر UPDATE، پیش از lookup هر منبع، کانکتور بررسی می‌کند که آیا Claim تغییر‌یافته در محدوده تغییرات پشتیبانی‌شده قرار دارد یا خیر. اگر تنها Claimهای ایمیل اصلی، Alias، username داخلی یا Claimهای نامرتبط در رویداد باشند، مسیر بدون GET/POST/PATCH/DELETE خاتمه می‌یابد.
 
-### Create: POST /Users
+Aliasها در این Connector نگاشت یا پشتیبانی نمی‌شوند؛ بنابراین شکل Claim مربوط به Alias نیز نباید موجب عملیات SCIM شود. در Update هیچ مسیر جایگزینی برای تغییر userName یا externalId وجود ندارد.
 
-Send only the attributes needed to create the Stalwart account:
-- `schemas`: exactly the SCIM core User schema URI;
-- `userName`: the configured primary email claim, validated as a full email address;
-- `externalId`: the configured immutable WSO2 identifier, required and non-empty;
-- `displayName`: only when a non-empty configured displayName or usable name input is available;
-- `active`: only when an explicitly configured Boolean active claim is present and valid.
+## ۴. منطق نام نمایشی
 
-Do not send `emails`, password, phone numbers, address, photos, locale, timezone, arbitrary WSO2 claims, group names, or empty/null attributes. Do not send `meta`, `id`, or server-managed attributes on create. The primary email is represented by `userName`; alias synchronization is out of scope.
+شرط تغییر نام OR است:
 
-### Profile update: PATCH /Users/{id}
+FIRSTNAME changed OR LASTNAME changed OR DISPLAYNAME changed
 
-Use the SCIM PatchOp schema and only `replace` operations for supported profile attributes. In the current Stalwart mapping the supported profile field is `displayName`. Resolve it from the explicit displayName claim first, otherwise compose it from both givenName and familyName when both are present.
+- اگر DISPLAYNAME خود تغییر کرده باشد، مقدار جاری آن انتخاب می‌شود.
+- اگر FIRSTNAME یا LASTNAME تغییر کرده باشد، هر دو مقدار از تصویر کامل و جاری UserStore خوانده و ترکیب می‌شوند.
+- در صورت نبودن هر یک از Claimهای لازم در تصویر کامل، تغییر ناقص ارسال نمی‌شود.
+- اگر مقدار نهایی خالی باشد، جایگزینی مخرب ارسال نمی‌شود.
+- در HYBRID تغییرات تکراری برای یک scope و externalId ادغام می‌شوند؛ مقدار نهایی آخرین snapshot معتبر است.
+- تغییر نام و وضعیت active یا عضویت گروه در یک bucket مشترک قرار نمی‌گیرند.
 
-Never include `userName`, `externalId`, `emails`, `password`, `groups`, `active`, or arbitrary claims in a profile-update payload. Empty values are not sent as replacements; partial name input must not erase or truncate a complete display name. Do not emit a PATCH document with an empty Operations array.
+## ۵. قرارداد SCIM User
 
-The trigger condition is OR, not AND: a change to FIRSTNAME, LASTNAME, or DISPLAYNAME individually must be detected. Do not infer the changed field merely from whichever values happen to be present in a partial event. The dispatcher must obtain the complete current authoritative name snapshot from WSO2 (or receive an explicitly complete snapshot) and retain change-origin metadata:
-- if DISPLAYNAME itself changed, use its current non-empty value;
-- if FIRSTNAME or LASTNAME changed, compose the display name from the latest complete FIRSTNAME and LASTNAME values, even if an unchanged/stale DISPLAYNAME claim is also present;
-- if a complete safe value cannot be obtained, do not send a destructive partial replacement; keep the item pending with a diagnostic state.
+### ایجاد
 
-Coalesce repeated profile changes for one account into one latest desired value. Deduplicate operations by SCIM path so one Bulk request never contains multiple conflicting writes to the same user/path. If the existing outbound provisioning callback does not expose which claim changed, the event observer/dispatcher must reconcile the current WSO2 claim snapshot rather than guessing from attribute presence.
+POST /Users فقط شامل این داده‌ها است:
+- SCIM core User schema؛
+- userName معتبر و کامل ایمیل؛
+- externalId پایدار و غیرخالی؛
+- displayName در صورت وجود مقدار معتبر؛
+- active فقط در صورت پیکربندی Claim فعال معتبر.
 
-### Active state and group membership
+ایجاد شامل emails، password، phoneNumbers، addresses، photos، groups، Claimهای دلخواه، meta یا شناسه سمت سرور نیست.
 
-- Email entitlement is represented by `User.active`; it is not a SCIM Group and must never be sent as a Stalwart Group membership.
-- Other distribution-group membership changes remain explicit Group resource PATCH operations, with stable Stalwart user IDs.
-- Do not mix profile updates with active-state or membership operations in the same coalescing bucket.
-- Do not send unchanged or duplicate group membership deltas when the connector can establish that no change is needed.
+### تغییر پروفایل
 
-## SCIM Bulk contract
+PATCH /Users/{id} فقط برای displayName است. userName، externalId، emails، active، groups و password در payload تغییر پروفایل قرار نمی‌گیرند.
 
-- Use the RFC 7644 BulkRequest schema and one operation object per queued user profile update.
-- Stalwart requires a non-empty `bulkId` on each Bulk `POST` operation even when no other operation references it. Independent `PATCH` operations against existing Users do not need cross-operation `bulkId` references.
-- Each operation must carry method `PATCH`, a properly encoded `/Users/{id}` path, and a PatchOp body.
-- No cross-operation `bulkId` references are needed for independent updates to existing users.
-- Enforce both the configured payload byte ceiling and the server's documented operation-count ceiling before sending.
-- Parse every operation result independently. A successful HTTP envelope does not imply every operation succeeded.
-- Acknowledge only successful operations. Retain failed operations with their individual status and response detail; do not replay successful siblings.
-- Treat an ambiguous network outcome as unknown. Reconcile the current Stalwart profile before retrying; do not blindly replay a batch whose commit status is unknown.
-- Bulk endpoint fallback is permitted only for definitive unsupported-endpoint responses (404/405/501), and fallback state is scoped to the exact SCIM base URL/tenant.
+PATCH فقط برای Claimهای تغییرکرده مجاز ساخته می‌شود؛ سند Operations خالی ارسال نمی‌شود.
 
-## Identity, tenant isolation, and SCIM correctness
+### وضعیت حساب
 
-- `externalId` is immutable after creation and is the authoritative cross-system key.
-- For UPDATE/DELETE events whose claim map is absent, the default mapping may resolve the local WSO2 `entityName` as `externalId`; this fallback is allowed only when `external-id-claim-uri` is the default username claim. A supplied but non-matching externalId is never bypassed with an email lookup.
-- Before POST, if lookup by externalId misses, lookup by userName and read the resource. Reuse it only when its externalId exactly matches; reject a different externalId. If a concurrent create wins between preflight and POST, reconcile by the same rule before treating the POST as successful.
-- `userName` is the initial primary email/login and is immutable in this connector's update contract.
-- Resolve resource IDs within the configured SCIM endpoint and tenant security context; never share cache or queue identity across organizations or user stores.
-- Escape SCIM filter string literals and URL-encode filter query parameters and resource path segments.
-- Send SCIM media types and required schema URIs; validate response status and resource IDs before caching.
-- At connection validation, discover `/ServiceProviderConfig` and `/Schemas`; verify the server advertises PATCH and (for BULK/HYBRID) Bulk support, and verify the required User attributes are writable. Do not assume capabilities solely from a product/version string.
-- Use the server's SCIM ETag/version where available for conditional writes, and handle version conflicts by refreshing the current resource and reconciling the intended state rather than blindly overwriting concurrent changes.
-- Do not infer successful provisioning from an HTTP 2xx Bulk envelope alone.
-- Keep bearer tokens and claim values out of logs and diagnostics.
+گروه WSO2 با نام پیکربندی‌شده Email به active نگاشت می‌شود. حذف از گروه Email به active=false و افزودن به آن به active=true تبدیل می‌شود. گروه Email هرگز در endpoint گروه‌های Stalwart جست‌وجو یا ساخته نمی‌شود.
 
-## Required verification before HYBRID is enabled
+### گروه‌های توزیع
 
-1. Confirm from WSO2 IS 7.3.0 runtime logs which event names fire for UI creation, CSV import, claim updates, and bulk import retries.
-2. Confirm whether outbound provisioning callbacks already cover those same paths.
-3. Verify the event-handler service API, DS metadata, and OSGi imports against the exact 7.3.0 distribution.
-4. Test durable queue restart recovery, concurrent schedulers, tenant isolation, coalescing, payload limits, partial Bulk failure, and ambiguous outcomes.
-5. Run live tests against the target Stalwart Enterprise SCIM endpoint, including the actual configured domain/tenant behavior.
+گروه‌های دیگر باید از قبل در Stalwart موجود باشند. عضویت با PATCH delta روی Group اعمال می‌شود. افزودن/حذف عضو با بازنویسی فهرست کامل اعضا انجام نمی‌شود. رویدادهای چرخه عمر خود گروه WSO2 نادیده گرفته می‌شوند.
 
-Until all five gates pass, `HYBRID` must fail closed or remain unavailable rather than silently reverting to volatile in-memory buffering.
+## ۶. Outbox پایدار HYBRID
+
+جدول: STALWART_SCIM_PROFILE_OUTBOX
+
+- منبع حقیقت صف، JDBC است و نه حافظه فرایند.
+- درج/ادغام با تراکنش انجام می‌شود.
+- شناسه کلید شامل scope و externalId است.
+- scope مقصد، سازمان (در صورت وجود)، tenant و user store را جدا می‌کند.
+- claim کردن ردیف‌ها با قفل ردیفی و lease انجام می‌شود.
+- وضعیت‌ها PENDING، IN_FLIGHT، SENT و DEAD هستند.
+- تلاش مجدد محدود و backoff دارد؛ پس از آستانه تعریف‌شده، رکورد DEAD می‌شود.
+- رکوردهای SENT برای ۳۰ روز نگهداری می‌شوند؛ DEAD برای بررسی اپراتور حفظ می‌شود.
+- توکن و رمز عبور ذخیره نمی‌شوند.
+- همه نودهای WSO2 باید از دیتابیس مشترک استفاده کنند.
+
+worker هر پنج دقیقه اجرا و در هر نوبت حداکثر ۲۵ ردیف را claim می‌کند. شناسه مقصد باید با JVM property مربوطه یکسان باشد. مقدار JNDI کانکتور و Event Handler باید یکسان باشد.
+
+## ۷. قرارداد Bulk چندعملیاتی
+
+- هر ردیف صف به یک PATCH مستقل روی User موجود تبدیل می‌شود.
+- bulkId برای PATCH مستقل و بدون ارجاع متقابل لازم نیست.
+- محدودیت اندازه payload و تعداد عملیات پیش از ارسال بررسی می‌شود.
+- وضعیت هر عملیات در BulkResponse جداگانه تحلیل می‌شود.
+- فقط عملیات موفق SENT می‌شوند.
+- خطای یک عملیات نباید باعث تأیید یا replay عملیات موفق دیگر شود.
+- نتیجه مبهم شبکه با خواندن مجدد displayName هر کاربر reconcile می‌شود.
+- fallback فقط برای عدم پشتیبانی قطعی Bulk endpoint (404/405/501) مجاز است.
+- خطای HTTP کلی موفق به‌تنهایی معیار موفقیت عملیات‌ها نیست.
+
+## ۸. تنظیمات WSO2 و JVM
+
+تنظیمات مهم Connector:
+- provisioning-mode: INDIVIDUAL، BULK یا HYBRID
+- enable-profile-updates: در HYBRID باید true باشد
+- hybrid-outbox-jndi-name: به‌طور پیش‌فرض jdbc/WSO2CarbonDB
+- hybrid-scope-id: targetId|tenantDomain|userStoreDomain یا targetId|organizationId|tenantDomain|userStoreDomain
+- email-membership-group: به‌طور پیش‌فرض Email
+
+JVM properties موردنیاز HYBRID:
+- stalwart.scim.hybrid.enabled=true
+- stalwart.scim.hybrid.outbox.jndi=jdbc/WSO2CarbonDB
+- stalwart.scim.hybrid.target-id=<unique-target-id>
+
+Event Handler باید به POST_ADD_USER و POST_SET_USER_CLAIMS مشترک شود. Handler برای رویداد تغییر Claim، تنها زمانی Outbox را می‌نویسد که یکی از Claimهای نام تغییر کرده باشد.
+
+URIهای سفارشی externalId، given name، family name و displayName باید در JVM و Connector یکسان باشند؛ عدم تطابق باید initialization را متوقف کند.
+
+## ۹. امنیت و حریم داده
+
+- Bearer Token و password در Outbox یا log ذخیره نمی‌شوند.
+- مقادیر Claimها و کل رکورد کاربر در log چاپ نمی‌شوند.
+- HTTPS و اعتبارسنجی گواهی TLS لازم است.
+- فیلتر SCIM و segmentهای URL باید escape/encode شوند.
+- cache محدود به endpoint و نوع resource است.
+- درخواست‌های هم‌زمان محدود می‌شوند.
+- externalId معیار authoritative است؛ تطبیق صرف با ایمیل مجاز نیست.
+
+## ۱۰. تست‌های خودکار مورد انتظار
+
+- تست factory و تعداد ۲۱ فیلد UI؛
+- بررسی انگلیسی بودن توضیحات UI؛
+- no-op برای ایمیل اصلی، Alias، افزودن/حذف Alias و username داخلی؛
+- تست ساخت کاربر و reconcile externalId؛
+- تست OR برای نام‌ها و اولویت DISPLAYNAME؛
+- تست coalescing و lease صف؛
+- تست ارسال چند PATCH در Bulk؛
+- تست acknowledgement مستقل عملیات؛
+- تست retry/dead-letter و نتیجه مبهم؛
+- تست active و عضویت گروه.
+
+## ۱۱. آزمون‌های عملیاتی اجباری پیش از انتشار
+
+این موارد با Smoke Test یا CI به‌تنهایی اثبات نمی‌شوند:
+1. نصب دو bundle روی توزیع دقیق WSO2 IS 7.3.0 و بررسی OSGi resolution؛
+2. تحویل واقعی POST_SET_USER_CLAIMS و POST_ADD_USER؛
+3. بررسی اینکه CSV import چه رویدادهایی تولید می‌کند و آیا outbound provisioning دوباره همان تغییر را ارسال می‌کند؛
+4. تست دیتابیس واقعی WSO2CarbonDB و dialect آن؛
+5. تست restart، بازیابی lease و چندنودی؛
+6. تست Stalwart Enterprise واقعی، مجوزها، domain/tenant، PATCH، Bulk و ETag؛
+7. تست خطاهای جزئی Bulk و قطع شبکه پس از commit احتمالی.
+
+تا تکمیل این موارد، HYBRID و نسخه 2.0.4 باید توسعه‌ای تلقی شوند و نه انتشار تولیدی تأییدشده.
+
+## ۱۲. نکته انتشار
+
+نسخه Maven در شاخه توسعه 2.0.4-SNAPSHOT است. پس از موفقیت CI و تکمیل آزمون‌های واقعی، می‌توان آن را به نسخه release بدون پسوند SNAPSHOT تبدیل و tag نهایی ایجاد کرد. شاخه release/2.0.1 نباید در این کار تغییر کند.
