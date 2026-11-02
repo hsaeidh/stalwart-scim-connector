@@ -67,7 +67,7 @@ public final class HybridProfileOutbox {
                 || displayName == null || displayName.isBlank()) {
             throw new IllegalArgumentException("Scope, externalId and non-empty displayName are required.");
         }
-        if (scope.length() > 512 || externalId.length() > 512 || displayName.length() > 1024) {
+        if (scope.length() > 128 || externalId.length() > 512 || displayName.length() > 1024) {
             throw new IllegalArgumentException("Hybrid profile outbox field exceeds its configured storage limit.");
         }
         String key = sha256(scope.trim() + "\n" + externalId.trim());
@@ -256,11 +256,14 @@ public final class HybridProfileOutbox {
                     }
                 }
             }
-            if (found) return;
+            if (found) {
+                ensureScopeIndex(connection, metadata);
+                return;
+            }
             try (Statement statement = connection.createStatement()) {
                 statement.executeUpdate("CREATE TABLE " + TABLE + " ("
                         + "ENTRY_KEY VARCHAR(64) NOT NULL PRIMARY KEY,"
-                        + "SCOPE_KEY VARCHAR(512) NOT NULL,"
+                        + "SCOPE_KEY VARCHAR(128) NOT NULL,"
                         + "EXTERNAL_ID VARCHAR(512) NOT NULL,"
                         + "DISPLAY_NAME VARCHAR(1024) NOT NULL,"
                         + "SOURCE VARCHAR(64) NOT NULL,"
@@ -286,6 +289,35 @@ public final class HybridProfileOutbox {
                 }
                 if (!tableNowExists) throw e;
             }
+            ensureScopeIndex(connection, metadata);
+        }
+    }
+
+    private void ensureScopeIndex(Connection connection, DatabaseMetaData metadata) throws SQLException {
+        String indexName = "STALWART_SCIM_OUTBOX_SCOPE_IDX";
+        boolean found = false;
+        try (ResultSet indexes = metadata.getIndexInfo(null, null, TABLE, false, false)) {
+            while (indexes.next()) {
+                if (indexName.equalsIgnoreCase(indexes.getString("INDEX_NAME"))) {
+                    found = true;
+                    break;
+                }
+            }
+        }
+        if (found) return;
+        try (Statement statement = connection.createStatement()) {
+            statement.executeUpdate("CREATE INDEX " + indexName + " ON " + TABLE + " (SCOPE_KEY, STATUS)");
+        } catch (SQLException e) {
+            boolean indexNowExists = false;
+            try (ResultSet indexes = metadata.getIndexInfo(null, null, TABLE, false, false)) {
+                while (indexes.next()) {
+                    if (indexName.equalsIgnoreCase(indexes.getString("INDEX_NAME"))) {
+                        indexNowExists = true;
+                        break;
+                    }
+                }
+            }
+            if (!indexNowExists) throw e;
         }
     }
 
