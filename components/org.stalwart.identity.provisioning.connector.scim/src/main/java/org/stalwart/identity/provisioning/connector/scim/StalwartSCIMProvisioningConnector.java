@@ -177,6 +177,14 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
                 throw new IdentityProvisioningException(
                         "hybrid-outbox-jndi-name must match JVM property -Dstalwart.scim.hybrid.outbox.jndi.");
             }
+            validateHybridClaimUri("stalwart.scim.hybrid.external-id-claim-uri",
+                    externalIdClaimUri, "http://wso2.org/claims/username");
+            validateHybridClaimUri("stalwart.scim.hybrid.given-name-claim-uri",
+                    givenNameClaimUri, "http://wso2.org/claims/givenname");
+            validateHybridClaimUri("stalwart.scim.hybrid.family-name-claim-uri",
+                    familyNameClaimUri, "http://wso2.org/claims/lastname");
+            validateHybridClaimUri("stalwart.scim.hybrid.display-name-claim-uri",
+                    displayNameClaimUri, "http://wso2.org/claims/displayname");
         }
         if (bulkRequestTimeoutMs < 1000 || bulkRequestTimeoutMs > 120000) {
             throw new IdentityProvisioningException("bulk-request-timeout-ms must be between 1000 and 120000.");
@@ -232,6 +240,16 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
                         "Unable to initialize the durable HYBRID profile outbox from JNDI resource "
                                 + hybridOutboxJndiName + ".", e);
             }
+        }
+    }
+
+    private void validateHybridClaimUri(String systemProperty, String connectorClaimUri, String defaultUri)
+            throws IdentityProvisioningException {
+        String eventClaimUri = System.getProperty(systemProperty, defaultUri);
+        if (!eventClaimUri.equals(connectorClaimUri)) {
+            throw new IdentityProvisioningException(
+                    "HYBRID event-handler claim URI mismatch for JVM property -" + systemProperty
+                            + "; it must match the outbound connection claim mapping.");
         }
     }
 
