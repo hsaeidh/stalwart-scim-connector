@@ -2,6 +2,7 @@ package org.stalwart.identity.provisioning.connector.scim;
 
 import org.wso2.carbon.identity.application.common.model.Property;
 import org.wso2.carbon.identity.application.common.model.ClaimMapping;
+import org.h2.jdbcx.JdbcDataSource;
 import org.wso2.carbon.identity.provisioning.ProvisioningEntity;
 import org.wso2.carbon.identity.provisioning.ProvisioningEntityType;
 import org.wso2.carbon.identity.provisioning.ProvisioningOperation;
@@ -135,6 +136,7 @@ public final class StalwartSCIMFactorySmokeTest {
         assertBulkTransportRequest();
         assertStableEntityNameReconciliationWithoutEmailClaim();
         assertUsernameCollisionReconcilesOnlySameExternalId();
+        assertDurableOutboxCoalescingAndLease();
 
         System.out.println("Connector type: " + factory.getConnectorType());
         System.out.println("Properties count: " + properties.size());
@@ -374,6 +376,45 @@ public final class StalwartSCIMFactorySmokeTest {
             throw new IllegalStateException("Username/externalId conflict reconciliation smoke test failed.", e);
         } finally {
             if (server != null) server.stop(0);
+        }
+    }
+
+    private static void assertDurableOutboxCoalescingAndLease() {
+        try {
+            JdbcDataSource dataSource = new JdbcDataSource();
+            dataSource.setURL("jdbc:h2:mem:stalwart_outbox_smoke;DB_CLOSE_DELAY=-1");
+            HybridProfileOutbox outbox = new HybridProfileOutbox(dataSource);
+
+            outbox.enqueue("carbon.super|PRIMARY", "1234567890", "Connector snapshot", "CONNECTOR", 1);
+            outbox.enqueue("carbon.super|PRIMARY", "1234567890", "Authoritative WSO2 name", "EVENT_NAMEPARTS", 2);
+            outbox.enqueue("carbon.super|PRIMARY", "1234567890", "Stale connector snapshot", "CONNECTOR", 1);
+
+            List<HybridProfileOutbox.Entry> first = outbox.claimBatch(
+                    "carbon.super|PRIMARY", 100, "node-1", 60_000);
+            if (first.size() != 1 || !"Authoritative WSO2 name".equals(first.get(0).displayName())) {
+                throw new IllegalStateException("Outbox did not coalesce to the highest-priority current snapshot.");
+            }
+            List<HybridProfileOutbox.Entry> competing = outbox.claimBatch(
+                    "carbon.super|PRIMARY", 100, "node-2", 60_000);
+            if (!competing.isEmpty()) {
+                throw new IllegalStateException("A second scheduler claimed a row while the first lease was active.");
+            }
+
+            outbox.markSent(first.get(0).key(), "node-1");
+            outbox.enqueue("carbon.super|PRIMARY", "1234567890", "Next profile change", "CONNECTOR", 1);
+            List<HybridProfileOutbox.Entry> second = outbox.claimBatch(
+                    "carbon.super|PRIMARY", 100, "node-2", 60_000);
+            if (second.size() != 1 || !"Next profile change".equals(second.get(0).displayName())) {
+                throw new IllegalStateException("A new update was not re-enqueued after the previous one was sent.");
+            }
+            outbox.markRetry(second.get(0), "node-2", "simulated transient failure", 1);
+            List<HybridProfileOutbox.Entry> dead = outbox.claimBatch(
+                    "carbon.super|PRIMARY", 100, "node-3", 60_000);
+            if (!dead.isEmpty()) {
+                throw new IllegalStateException("A terminally failed outbox entry was not moved out of the pending queue.");
+            }
+        } catch (Exception e) {
+            throw new IllegalStateException("Durable hybrid outbox smoke test failed.", e);
         }
     }
 
