@@ -23,11 +23,15 @@ import java.util.Map;
 import java.lang.reflect.Method;
 
 /**
- * Observation-only WSO2 event handler for validating event delivery on IS 7.3.0.
+ * WSO2 event handler for the HYBRID profile synchronization path.
  *
- * This bundle deliberately does not call Stalwart and does not enqueue work.
- * Outbound provisioning remains the only mutation path until durable outbox
- * delivery and duplicate-ingress semantics have been verified.
+ * The handler never calls Stalwart directly. For POST_SET_USER_CLAIMS events
+ * that change FIRSTNAME, LASTNAME or DISPLAYNAME, it reads the authoritative
+ * current WSO2 claim snapshot and persists the desired displayName in the
+ * shared JDBC outbox. The connector's five-minute worker delivers the queued
+ * changes through multi-operation SCIM Bulk PATCH requests.
+ *
+ * Primary email, aliases and the WSO2 local username are deliberately ignored.
  */
 @Component(
         name = "org.stalwart.identity.provisioning.connector.scim.event.StalwartSCIMProfileEventHandler",
@@ -41,7 +45,7 @@ public final class StalwartSCIMProfileEventHandler extends AbstractEventHandler 
 
     @Activate
     protected void activate() {
-        LOG.info("Stalwart SCIM WSO2 event handler activated; HYBRID snapshot ingestion enabled="
+        LOG.info("Stalwart SCIM WSO2 profile event handler activated; HYBRID snapshot ingestion enabled="
                 + Boolean.parseBoolean(System.getProperty("stalwart.scim.hybrid.enabled", "false")));
     }
 
