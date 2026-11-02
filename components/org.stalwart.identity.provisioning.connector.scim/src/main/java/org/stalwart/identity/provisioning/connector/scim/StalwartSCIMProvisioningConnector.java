@@ -220,6 +220,14 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
         // provisioning input userName claim. WSO2 may invoke POST again for a
         // membership/claim event whose attribute map omits emailaddress.
         String externalId = mappedValue(attrs, externalIdClaimUri);
+        // With the default mapping, WSO2 entityName is the local username and
+        // therefore the same stable value used as Stalwart externalId. POST
+        // retries caused by later membership/profile events may omit claim attrs.
+        if (StringUtils.isBlank(externalId) && USERNAME_CLAIM.equals(externalIdClaimUri)
+                && StringUtils.isNotBlank(entity.getEntityName())
+                && entity.getEntityName().indexOf('@') < 0) {
+            externalId = stripUserStoreDomain(entity.getEntityName().trim());
+        }
         if (StringUtils.isBlank(externalId)) {
             throw new IdentityProvisioningException(
                     "A non-empty stable WSO2 externalId claim is required to reconcile a Stalwart account.");
