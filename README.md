@@ -29,6 +29,7 @@ Set the WSO2 JVM system properties:
 ~~~text
 -Dstalwart.scim.hybrid.enabled=true
 -Dstalwart.scim.hybrid.outbox.jndi=jdbc/WSO2CarbonDB
+-Dstalwart.scim.hybrid.target-id=email.irisadc.ir
 ~~~
 
 The JNDI resource must resolve to a durable shared JDBC DataSource. In a multi-node WSO2 deployment, all nodes must use the same database. The connector creates the table `STALWART_SCIM_PROFILE_OUTBOX` if it does not exist.
@@ -38,7 +39,7 @@ For the WSO2 outbound connection, set:
 - `provisioning-mode=HYBRID`
 - `enable-profile-updates=true`
 - `hybrid-outbox-jndi-name=jdbc/WSO2CarbonDB` (must match the JVM property)
-- `hybrid-scope-id` to the exact event scope: `tenantDomain|userStoreDomain`, or `organizationId|tenantDomain|userStoreDomain` when the WSO2 event supplies a resident/accessing organization ID.
+- `hybrid-scope-id` to the exact event scope: `targetId|tenantDomain|userStoreDomain`, or `targetId|organizationId|tenantDomain|userStoreDomain` when the WSO2 event supplies a resident/accessing organization ID. `targetId` must match the JVM property and be unique per Stalwart endpoint.
 
 Enable the event handler in `repository/conf/deployment.toml`:
 
