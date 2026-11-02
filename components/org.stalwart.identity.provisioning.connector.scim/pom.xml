@@ -77,7 +77,7 @@ Bundle-StartLevel: 1
 Bundle-ClassPath: .,lib/gson-2.11.0.jar
 -dsannotations: *
 -dsannotations-options: inherit
-Export-Package: !org.stalwart.identity.provisioning.connector.scim.internal,org.stalwart.identity.provisioning.connector.scim.*;version="${project.version}"
+Export-Package: !org.stalwart.identity.provisioning.connector.scim.internal,org.stalwart.identity.provisioning.connector.scim;version="${project.version}",org.stalwart.identity.provisioning.connector.scim.*;version="${project.version}"
 Import-Package: org.wso2.carbon.identity.provisioning;version="[7.10,8)",org.wso2.carbon.identity.application.common.model;version="[7.10,8)",!com.google.gson.* ,*
 Require-Capability: osgi.ee;filter:="(&(osgi.ee=JavaSE)(version>=21))"
           ]]></bnd>
