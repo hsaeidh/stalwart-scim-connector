@@ -593,6 +593,16 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
     private void updateUser(ProvisioningEntity entity, boolean forceEmailEntitlement)
             throws IdentityProvisioningException {
         Map<ClaimMapping, List<String>> attrs = entity.getAttributes();
+        // Email address, aliases and the WSO2 local username are deliberately
+        // outside the Stalwart synchronization contract. If an update contains
+        // no supported profile, active-state or group-membership delta, return
+        // before performing even a SCIM lookup. In particular, never resolve a
+        // changed externalId by falling back to a mutable email address.
+        if (!forceEmailEntitlement && !hasSupportedUpdate(attrs)) {
+            log.debug("Ignoring WSO2 update with no supported Stalwart changes "
+                    + "(primary email, aliases, local username and unsupported claims are not synchronized).");
+            return;
+        }
         List<String> newGroups = distinctGroupNames(
                 claimValues(attrs, IdentityProvisioningConstants.NEW_GROUP_CLAIM_URI));
         List<String> deletedGroups = distinctGroupNames(
@@ -662,6 +672,16 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
         if (desiredActive != null) {
             setStalwartActive(attrs, entity.getEntityName(), desiredActive);
         }
+    }
+
+    private boolean hasSupportedUpdate(Map<ClaimMapping, List<String>> attrs) {
+        if (attrs == null || attrs.isEmpty()) return false;
+        return StringUtils.isNotBlank(mappedValue(attrs, givenNameClaimUri))
+                || StringUtils.isNotBlank(mappedValue(attrs, familyNameClaimUri))
+                || StringUtils.isNotBlank(mappedValue(attrs, displayNameClaimUri))
+                || StringUtils.isNotBlank(mappedValue(attrs, activeClaimUri))
+                || CollectionUtils.isNotEmpty(claimValues(attrs, IdentityProvisioningConstants.NEW_GROUP_CLAIM_URI))
+                || CollectionUtils.isNotEmpty(claimValues(attrs, IdentityProvisioningConstants.DELETED_GROUP_CLAIM_URI));
     }
 
     private void setStalwartActive(Map<ClaimMapping, List<String>> attrs, String fallback, boolean active)
