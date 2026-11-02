@@ -515,7 +515,7 @@ public final class StalwartSCIMFactorySmokeTest {
 
             Method flush = StalwartSCIMProvisioningConnector.class.getDeclaredMethod("flushScimOperationOutbox");
             flush.setAccessible(true);
-            flush.invoke(connector, scope);
+            flush.invoke(connector);
 
             JsonObject sent = JsonParser.parseString(payload.get()).getAsJsonObject();
             if (requestCount.get() != 1 || sent.getAsJsonArray("Operations").size() != 2) {
@@ -618,7 +618,7 @@ public final class StalwartSCIMFactorySmokeTest {
 
             Method flush = StalwartSCIMProvisioningConnector.class.getDeclaredMethod("flushHybridProfileOutbox", String.class);
             flush.setAccessible(true);
-            flush.invoke(connector);
+            flush.invoke(connector, scope);
 
             if (bulkCount.get() != 1 || bulkPayload.get() == null) {
                 throw new IllegalStateException("HYBRID scheduler did not send one Bulk request.");
