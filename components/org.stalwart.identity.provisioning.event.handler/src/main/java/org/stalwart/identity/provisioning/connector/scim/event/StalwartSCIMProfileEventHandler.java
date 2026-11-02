@@ -146,9 +146,10 @@ public final class StalwartSCIMProfileEventHandler extends AbstractEventHandler 
         if (organizationId == null) {
             organizationId = stringValue(properties.get("ACCESSING_ORGANIZATION_ID"));
         }
+        String targetId = System.getProperty("stalwart.scim.hybrid.target-id", "default");
         String scope = organizationId == null
-                ? tenantDomain + "|" + userStoreDomain
-                : organizationId + "|" + tenantDomain + "|" + userStoreDomain;
+                ? targetId + "|" + tenantDomain + "|" + userStoreDomain
+                : targetId + "|" + organizationId + "|" + tenantDomain + "|" + userStoreDomain;
         String jndiName = System.getProperty("stalwart.scim.hybrid.outbox.jndi",
                 HybridProfileOutbox.DEFAULT_JNDI_NAME);
         getOutbox(jndiName).enqueue(scope, externalId, displayName, source, 2);
