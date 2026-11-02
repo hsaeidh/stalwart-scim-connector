@@ -11,6 +11,8 @@ import com.google.gson.JsonParser;
 import com.sun.net.httpserver.HttpServer;
 import java.lang.reflect.Method;
 import java.net.InetSocketAddress;
+import java.lang.reflect.Field;
+import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -142,6 +144,7 @@ public final class StalwartSCIMFactorySmokeTest {
         assertStableEntityNameReconciliationWithoutEmailClaim();
         assertUsernameCollisionReconcilesOnlySameExternalId();
         assertDurableOutboxCoalescingAndLease();
+        assertHybridSchedulerSendsMultiOperationBulkPatch();
 
         System.out.println("Connector type: " + factory.getConnectorType());
         System.out.println("Properties count: " + properties.size());
@@ -421,6 +424,126 @@ public final class StalwartSCIMFactorySmokeTest {
         } catch (Exception e) {
             throw new IllegalStateException("Durable hybrid outbox smoke test failed.", e);
         }
+    }
+
+    private static void assertHybridSchedulerSendsMultiOperationBulkPatch() {
+        HttpServer server = null;
+        try {
+            JdbcDataSource dataSource = new JdbcDataSource();
+            dataSource.setURL("jdbc:h2:mem:stalwart_hybrid_bulk_smoke;DB_CLOSE_DELAY=-1");
+            HybridProfileOutbox outbox = new HybridProfileOutbox(dataSource);
+            String scope = "email.irisadc.ir|carbon.super|PRIMARY";
+            outbox.enqueue(scope, "external-1", "Updated One", "EVENT_NAMEPARTS", 2);
+            outbox.enqueue(scope, "external-2", "Updated Two", "EVENT_DISPLAYNAME", 2);
+
+            AtomicInteger bulkCount = new AtomicInteger();
+            AtomicReference<String> bulkPayload = new AtomicReference<>();
+            server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+            server.createContext("/scim/v2/Users", exchange -> {
+                String path = exchange.getRequestURI().getPath();
+                if ("GET".equals(exchange.getRequestMethod()) && "/scim/v2/Users".equals(path)) {
+                    String query = exchange.getRequestURI().getRawQuery();
+                    String external = query != null && query.contains("external-1") ? "external-1" : "external-2";
+                    JsonObject resource = new JsonObject();
+                    resource.addProperty("id", "external-1".equals(external) ? "user-1" : "user-2");
+                    com.google.gson.JsonArray resources = new com.google.gson.JsonArray();
+                    resources.add(resource);
+                    JsonObject list = new JsonObject();
+                    list.addProperty("totalResults", 1);
+                    list.add("Resources", resources);
+                    byte[] bytes = list.toString().getBytes(StandardCharsets.UTF_8);
+                    exchange.getResponseHeaders().set("Content-Type", "application/scim+json");
+                    exchange.sendResponseHeaders(200, bytes.length);
+                    try (var output = exchange.getResponseBody()) { output.write(bytes); }
+                    return;
+                }
+                if ("GET".equals(exchange.getRequestMethod())
+                        && ("/scim/v2/Users/user-1".equals(path) || "/scim/v2/Users/user-2".equals(path))) {
+                    JsonObject resource = new JsonObject();
+                    resource.addProperty("id", path.endsWith("user-1") ? "user-1" : "user-2");
+                    resource.addProperty("externalId", path.endsWith("user-1") ? "external-1" : "external-2");
+                    resource.addProperty("displayName", "Old value");
+                    JsonObject meta = new JsonObject();
+                    meta.addProperty("version", path.endsWith("user-1") ? "etag-1" : "etag-2");
+                    resource.add("meta", meta);
+                    byte[] bytes = resource.toString().getBytes(StandardCharsets.UTF_8);
+                    exchange.getResponseHeaders().set("Content-Type", "application/scim+json");
+                    exchange.sendResponseHeaders(200, bytes.length);
+                    try (var output = exchange.getResponseBody()) { output.write(bytes); }
+                    return;
+                }
+                exchange.sendResponseHeaders(404, -1);
+                exchange.close();
+            });
+            server.createContext("/scim/v2/Bulk", exchange -> {
+                if (!"POST".equals(exchange.getRequestMethod())) {
+                    exchange.sendResponseHeaders(405, -1);
+                    exchange.close();
+                    return;
+                }
+                bulkCount.incrementAndGet();
+                String body = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
+                bulkPayload.set(body);
+                JsonObject response = new JsonObject();
+                com.google.gson.JsonArray operations = new com.google.gson.JsonArray();
+                for (int i = 0; i < 2; i++) {
+                    JsonObject operation = new JsonObject();
+                    operation.addProperty("status", 204);
+                    operations.add(operation);
+                }
+                response.add("Operations", operations);
+                byte[] bytes = response.toString().getBytes(StandardCharsets.UTF_8);
+                exchange.getResponseHeaders().set("Content-Type", "application/scim+json");
+                exchange.sendResponseHeaders(200, bytes.length);
+                try (var output = exchange.getResponseBody()) { output.write(bytes); }
+            });
+            server.start();
+
+            String base = "http://127.0.0.1:" + server.getAddress().getPort() + "/scim/v2";
+            StalwartSCIMProvisioningConnector connector = new StalwartSCIMProvisioningConnector();
+            setField(connector, "baseUrl", base);
+            setField(connector, "bearerToken", "smoke-test-token");
+            setField(connector, "provisioningMode", "HYBRID");
+            setField(connector, "hybridScopeId", scope);
+            setField(connector, "hybridProfileOutbox", outbox);
+            setField(connector, "bulkRequestTimeoutMs", 30000);
+            setField(connector, "bulkMaxPayloadBytes", 900000);
+            setField(connector, "bulkFallbackToIndividual", true);
+
+            Method flush = StalwartSCIMProvisioningConnector.class.getDeclaredMethod("flushHybridProfileOutbox");
+            flush.setAccessible(true);
+            flush.invoke(connector);
+
+            if (bulkCount.get() != 1 || bulkPayload.get() == null) {
+                throw new IllegalStateException("HYBRID scheduler did not send one Bulk request.");
+            }
+            JsonObject sent = JsonParser.parseString(bulkPayload.get()).getAsJsonObject();
+            com.google.gson.JsonArray operations = sent.getAsJsonArray("Operations");
+            if (operations.size() != 2) {
+                throw new IllegalStateException("HYBRID scheduler did not batch multiple profile updates.");
+            }
+            for (int i = 0; i < operations.size(); i++) {
+                JsonObject operation = operations.get(i).getAsJsonObject();
+                if (!"PATCH".equals(operation.get("method").getAsString())
+                        || operation.has("bulkId")
+                        || !operation.has("version")) {
+                    throw new IllegalStateException("HYBRID Bulk PATCH did not preserve the SCIM operation contract.");
+                }
+            }
+            if (!outbox.claimBatch(scope, 10, "verification-node", 60_000).isEmpty()) {
+                throw new IllegalStateException("Successful Bulk operations were not acknowledged in the durable outbox.");
+            }
+        } catch (Exception e) {
+            throw new IllegalStateException("HYBRID multi-operation Bulk scheduler smoke test failed.", e);
+        } finally {
+            if (server != null) server.stop(0);
+        }
+    }
+
+    private static void setField(Object target, String name, Object value) throws Exception {
+        Field field = target.getClass().getDeclaredField(name);
+        field.setAccessible(true);
+        field.set(target, value);
     }
 
     private static void assertDefault(Map<String, Property> properties, String name, String expected) {
