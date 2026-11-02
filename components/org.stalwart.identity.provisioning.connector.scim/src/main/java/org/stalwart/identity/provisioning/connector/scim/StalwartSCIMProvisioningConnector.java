@@ -151,8 +151,6 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
                             bulkMaxPayloadBytes = parseIntegerProperty(value, "bulk-max-payload-bytes");
                     case StalwartSCIMProvisioningConnectorConstants.HYBRID_OUTBOX_JNDI_NAME ->
                             hybridOutboxJndiName = value;
-                    case StalwartSCIMProvisioningConnectorConstants.HYBRID_SCOPE_ID ->
-                            hybridScopeId = value;
                     default -> log.debug("Ignoring unsupported Stalwart connector property: " + property.getName());
                 }
             }
