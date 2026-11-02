@@ -428,17 +428,24 @@ public final class StalwartSCIMFactorySmokeTest {
 
     private static void assertDurableBulkOutboxSurvivesReopen() {
         try {
-            JdbcDataSource dataSource = new JdbcDataSource();
-            dataSource.setURL("jdbc:h2:mem:stalwart_bulk_restart;DB_CLOSE_DELAY=-1");
-            ScimOperationOutbox firstProcess = new ScimOperationOutbox(dataSource);
+            String jdbcUrl = "jdbc:h2:file:./target/stalwart-bulk-restart-smoke;DB_CLOSE_ON_EXIT=FALSE";
+            JdbcDataSource firstDataSource = new JdbcDataSource();
+            firstDataSource.setURL(jdbcUrl);
+            ScimOperationOutbox firstProcess = new ScimOperationOutbox(firstDataSource);
             JsonObject patch = new JsonObject();
             patch.addProperty("marker", "persisted-before-network");
             String id = firstProcess.enqueue("restart-scope", "https://mail.example.com/scim/v2",
                     "PATCH", "/Users/user-1", patch.toString());
 
-            // A new outbox instance represents a newly initialized connector
-            // after a WSO2 process restart. It must see the committed pending row.
-            ScimOperationOutbox restartedProcess = new ScimOperationOutbox(dataSource);
+            // Close the embedded database and reopen the same file, simulating
+            // the persistence boundary across a WSO2 process restart.
+            try (java.sql.Connection connection = firstDataSource.getConnection();
+                 java.sql.Statement statement = connection.createStatement()) {
+                statement.execute("SHUTDOWN");
+            }
+            JdbcDataSource restartedDataSource = new JdbcDataSource();
+            restartedDataSource.setURL(jdbcUrl);
+            ScimOperationOutbox restartedProcess = new ScimOperationOutbox(restartedDataSource);
             List<ScimOperationOutbox.Entry> recovered = restartedProcess.claimBatch(
                     "restart-scope", 10, "restarted-node", 60_000L);
             if (recovered.size() != 1 || !id.equals(recovered.get(0).id())
