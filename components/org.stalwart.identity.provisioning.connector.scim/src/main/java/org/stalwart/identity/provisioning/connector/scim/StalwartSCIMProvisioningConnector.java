@@ -1068,7 +1068,7 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
             List<ScimOperationOutbox.Entry> claimed;
             try {
                 scimOperationOutbox.purgeSent(30);
-                claimed = scimOperationOutbox.claimBatch(scimOperationScope, 25, leaseOwner, 600_000L);
+                claimed = scimOperationOutbox.claimBatch(scimOperationScope, 25, leaseOwner, 180_000L);
             } catch (Exception e) {
                 log.error("Unable to claim durable SCIM Bulk operations.", e);
                 return;
@@ -1264,8 +1264,16 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
 
     private void markBulkSent(ScimOperationOutbox.Entry entry, JsonObject response) {
         try {
+            JsonObject compact = new JsonObject();
+            if (response != null) {
+                for (String attribute : List.of("id", "userName", "externalId", "displayName")) {
+                    if (response.has(attribute) && !response.get(attribute).isJsonNull()) {
+                        compact.add(attribute, response.get(attribute));
+                    }
+                }
+            }
             scimOperationOutbox.markSent(entry.id(), entry.leaseOwner(),
-                    response == null ? null : response.toString());
+                    compact.size() == 0 ? null : compact.toString());
         } catch (SQLException e) {
             log.error("Unable to acknowledge durable SCIM operation " + entry.id() + ".", e);
         }
