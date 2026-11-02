@@ -234,22 +234,39 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
 
     private void registerHybridWorker() {
         HYBRID_WORKERS.put(hybridScopeId, this);
-        if (HYBRID_SCHEDULER_STARTED.compareAndSet(false, true)) {
-            hybridScheduler = Executors.newSingleThreadScheduledExecutor(task -> {
-                Thread thread = new Thread(task, "stalwart-scim-hybrid-outbox");
-                thread.setDaemon(true);
-                return thread;
-            });
-            hybridScheduler.scheduleAtFixedRate(() -> {
-                for (StalwartSCIMProvisioningConnector worker : HYBRID_WORKERS.values()) {
-                    try {
-                        worker.flushHybridProfileOutbox();
-                    } catch (Throwable error) {
-                        log.error("Unexpected failure in HYBRID profile outbox scheduler.", error);
-                    }
+        startOutboxScheduler();
+    }
+
+    private void registerBulkWorker() {
+        BULK_WORKERS.put(scimOperationScope, this);
+        startOutboxScheduler();
+    }
+
+    private static void startOutboxScheduler() {
+        if (!HYBRID_SCHEDULER_STARTED.compareAndSet(false, true)) return;
+        hybridScheduler = Executors.newScheduledThreadPool(2, task -> {
+            Thread thread = new Thread(task, "stalwart-scim-durable-outbox");
+            thread.setDaemon(true);
+            return thread;
+        });
+        hybridScheduler.scheduleAtFixedRate(() -> {
+            for (StalwartSCIMProvisioningConnector worker : HYBRID_WORKERS.values()) {
+                try {
+                    worker.flushHybridProfileOutbox();
+                } catch (Throwable error) {
+                    log.error("Unexpected failure in HYBRID profile outbox scheduler.", error);
                 }
-            }, 5, 5, TimeUnit.MINUTES);
-        }
+            }
+        }, 5, 5, TimeUnit.MINUTES);
+        hybridScheduler.scheduleWithFixedDelay(() -> {
+            for (StalwartSCIMProvisioningConnector worker : BULK_WORKERS.values()) {
+                try {
+                    worker.flushScimOperationOutbox();
+                } catch (Throwable error) {
+                    log.error("Unexpected failure in durable SCIM Bulk outbox scheduler.", error);
+                }
+            }
+        }, 5, 15, TimeUnit.SECONDS);
     }
 
     /**
@@ -263,6 +280,7 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
             scheduler.shutdownNow();
         }
         HYBRID_WORKERS.clear();
+        BULK_WORKERS.clear();
         HYBRID_SCHEDULER_STARTED.set(false);
     }
 
