@@ -1,7 +1,7 @@
 name: Build Stalwart SCIM Connector
 on:
   push:
-    branches: [ "main", "release/1.0.8", "release/1.0.9", "release/2.0.1", "feature/scim-bulk-2.0.2", "feature/hybrid-bulk-2.0.3" ]
+    branches: [ "main", "release/1.0.8", "release/1.0.9", "release/2.0.1", "feature/scim-bulk-2.0.2", "feature/hybrid-bulk-2.0.3", "feature/2.0.4" ]
   pull_request:
   workflow_dispatch:
 permissions:
@@ -59,7 +59,7 @@ jobs:
           imports = attributes.get("Import-Package", "")
           service_component = attributes.get("Service-Component", "")
           require_capability = attributes.get("Require-Capability", "")
-          assert version == "2.0.3.SNAPSHOT", f"Unexpected Bundle-Version: {version!r}"
+          assert version == "2.0.4.SNAPSHOT", f"Unexpected Bundle-Version: {version!r}"
           assert attributes.get("Bundle-SymbolicName", "").split(";")[0] == (
               "org.stalwart.identity.provisioning.connector.scim"
           ), "Unexpected Bundle-SymbolicName"
@@ -117,12 +117,12 @@ jobs:
           assert root.attrib.get("deactivate") == "deactivate", "Missing deactivate method"
 
           for marker in (
-              "STALWART-SCIM STATIC INIT ENTERING v2.0.3",
-              "STALWART-SCIM STATIC INIT DONE v2.0.3",
-              "STALWART-SCIM CONSTRUCTOR v2.0.3",
-              "STALWART-SCIM ACTIVATE START v2.0.3",
-              "STALWART-SCIM ACTIVATE END v2.0.3",
-              "STALWART-SCIM ACTIVATE FAILED v2.0.3",
+              "STALWART-SCIM STATIC INIT ENTERING v2.0.4",
+              "STALWART-SCIM STATIC INIT DONE v2.0.4",
+              "STALWART-SCIM CONSTRUCTOR v2.0.4",
+              "STALWART-SCIM ACTIVATE START v2.0.4",
+              "STALWART-SCIM ACTIVATE END v2.0.4",
+              "STALWART-SCIM ACTIVATE FAILED v2.0.4",
           ):
               assert marker.encode() in class_data, f"Missing bytecode diagnostic marker: {marker}"
 
@@ -142,7 +142,7 @@ jobs:
           print("Verified exactly one SCR extender requirement and JavaSE >=21.")
           print("Verified Bundle-StartLevel=1 and Bundle-ActivationPolicy=lazy.")
           print("Verified WSO2 Import-Package ranges and no embedded WSO2 classes.")
-          print("Verified v2.0.3 static-init, constructor and activation diagnostic markers.")
+          print("Verified v2.0.4 static-init, constructor and activation diagnostic markers.")
           source_path = (
               "components/org.stalwart.identity.provisioning.connector.scim/src/main/java/"
               "org/stalwart/identity/provisioning/connector/scim/StalwartSCIMProvisioningConnector.java"
@@ -189,7 +189,7 @@ jobs:
           print("Verified nested Gson and unsigned JAR.")
           observer_path = (
               "components/org.stalwart.identity.provisioning.event.handler/target/"
-              "org.stalwart.identity.provisioning.event.handler-2.0.3-SNAPSHOT.jar"
+              "org.stalwart.identity.provisioning.event.handler-2.0.4-SNAPSHOT.jar"
           )
           with zipfile.ZipFile(observer_path) as observer:
               observer_manifest = observer.read("META-INF/MANIFEST.MF").decode("utf-8")
@@ -209,7 +209,7 @@ jobs:
       - name: Upload connector and event observer JARs
         uses: actions/upload-artifact@v6
         with:
-          name: stalwart-scim-connector-2.0.3-SNAPSHOT
+          name: stalwart-scim-connector-2.0.4-SNAPSHOT
           path: components/**/target/*.jar
           if-no-files-found: error
           retention-days: 30
