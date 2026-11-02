@@ -135,9 +135,13 @@ public final class StalwartSCIMProfileEventHandler extends AbstractEventHandler 
                         claimUri("stalwart.scim.hybrid.display-name-claim-uri", "http://wso2.org/claims/displayname"),
                         claimUri("stalwart.scim.hybrid.external-id-claim-uri", "http://wso2.org/claims/username")
                 });
-        String externalId = snapshot.get(claimUri("stalwart.scim.hybrid.external-id-claim-uri",
-                "http://wso2.org/claims/username"));
-        if (externalId == null || externalId.isBlank()) externalId = localUserName;
+        String externalIdClaim = claimUri("stalwart.scim.hybrid.external-id-claim-uri",
+                "http://wso2.org/claims/username");
+        String externalId = snapshot.get(externalIdClaim);
+        if ((externalId == null || externalId.isBlank())
+                && "http://wso2.org/claims/username".equals(externalIdClaim)) {
+            externalId = localUserName;
+        }
         if (externalId == null || externalId.isBlank()) {
             throw new IllegalStateException("Current WSO2 snapshot did not contain a stable externalId.");
         }
