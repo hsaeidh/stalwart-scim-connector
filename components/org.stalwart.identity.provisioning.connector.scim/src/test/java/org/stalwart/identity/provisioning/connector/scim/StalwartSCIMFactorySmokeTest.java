@@ -462,15 +462,10 @@ public final class StalwartSCIMFactorySmokeTest {
             JdbcDataSource dataSource = new JdbcDataSource();
             dataSource.setURL("jdbc:h2:mem:stalwart_bulk_batch;DB_CLOSE_DELAY=-1");
             ScimOperationOutbox outbox = new ScimOperationOutbox(dataSource);
-            String scope = "bulk-batch-scope";
             JsonObject patchOne = new JsonObject();
             patchOne.addProperty("schemas", "urn:ietf:params:scim:api:messages:2.0:PatchOp");
             JsonObject patchTwo = new JsonObject();
             patchTwo.addProperty("schemas", "urn:ietf:params:scim:api:messages:2.0:PatchOp");
-            String idOne = outbox.enqueue(scope, "http://127.0.0.1:1/scim/v2",
-                    "PATCH", "/Users/user-1", patchOne.toString());
-            String idTwo = outbox.enqueue(scope, "http://127.0.0.1:1/scim/v2",
-                    "PATCH", "/Users/user-2", patchTwo.toString());
 
             AtomicReference<String> payload = new AtomicReference<>();
             AtomicInteger requestCount = new AtomicInteger();
@@ -494,10 +489,7 @@ public final class StalwartSCIMFactorySmokeTest {
             server.start();
 
             String endpoint = "http://127.0.0.1:" + server.getAddress().getPort() + "/scim/v2";
-            // Recreate the pending entries under the actual test endpoint.
             ScimOperationOutbox activeOutbox = new ScimOperationOutbox(dataSource);
-            // The test rows above deliberately target a non-routable URL; remove
-            // their scope from this worker and create the actual routable batch.
             String activeScope = "active-bulk-batch-scope";
             String activeOne = activeOutbox.enqueue(activeScope, endpoint, "PATCH", "/Users/user-1",
                     patchOne.toString());
