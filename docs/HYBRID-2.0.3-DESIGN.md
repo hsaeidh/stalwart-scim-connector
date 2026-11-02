@@ -2,7 +2,7 @@
 
 ## Status
 
-This document is the implementation contract for the 2.0.3 development line. It is not a claim that Hybrid queueing, event ingestion, or CSV-import coverage is already implemented. Those capabilities remain gated on the persistence and WSO2 runtime checks below.
+This document is the implementation contract for the 2.0.3 development line. A separate observation-only WSO2 event-handler bundle has been added and its source compiles in CI; it is not yet proven in a live IS 7.3.0 runtime and it does not enqueue or provision users. Hybrid queueing, five-minute scheduling, full snapshot enrichment, and CSV-import coverage are not yet implemented.
 
 ## Compatibility and modes
 
@@ -18,7 +18,7 @@ WSO2 event subscriptions of interest are `POST_ADD_USER` and `POST_SET_USER_CLAI
 
 Do not let the event handler independently call Stalwart while the outbound connector also handles the same mutation. Both ingress paths, if both are eventually required, must call one dispatcher/outbox and share a deterministic idempotency key. Until CSV-import behavior is proven, the existing outbound connector remains authoritative.
 
-The event-handler bundle must be separately versioned and registered through WSO2's supported event-handler service contract. It must not be silently bundled into the provisioning connector unless its API and lifecycle dependencies are verified against WSO2 IS 7.3.0.
+The event-handler bundle is separate from the outbound provisioning connector and registers an `AbstractEventHandler` service through OSGi Declarative Services. Its current implementation is observation-only. The event API dependency and bundle compile have passed CI, but OSGi resolution and event delivery must still be verified against the exact WSO2 IS 7.3.0 distribution.
 
 ## Durable queue requirements
 
@@ -72,6 +72,7 @@ Coalesce repeated profile changes for one account into one latest desired value.
 ## SCIM Bulk contract
 
 - Use the RFC 7644 BulkRequest schema and one operation object per queued user profile update.
+- Stalwart requires a non-empty `bulkId` on each Bulk `POST` operation even when no other operation references it. Independent `PATCH` operations against existing Users do not need cross-operation `bulkId` references.
 - Each operation must carry method `PATCH`, a properly encoded `/Users/{id}` path, and a PatchOp body.
 - No cross-operation `bulkId` references are needed for independent updates to existing users.
 - Enforce both the configured payload byte ceiling and the server's documented operation-count ceiling before sending.
