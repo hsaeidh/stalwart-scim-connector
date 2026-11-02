@@ -102,6 +102,7 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
     private int bulkMaxPayloadBytes = 900000;
     private String hybridOutboxJndiName = HybridProfileOutbox.DEFAULT_JNDI_NAME;
     private String hybridScopeId;
+    private String legacyHybridScopeId;
     private HybridProfileOutbox hybridProfileOutbox;
     private ScimOperationOutbox scimOperationOutbox;
     private String scimOperationScope;
@@ -151,6 +152,8 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
                             bulkMaxPayloadBytes = parseIntegerProperty(value, "bulk-max-payload-bytes");
                     case StalwartSCIMProvisioningConnectorConstants.HYBRID_OUTBOX_JNDI_NAME ->
                             hybridOutboxJndiName = value;
+                    case StalwartSCIMProvisioningConnectorConstants.LEGACY_HYBRID_SCOPE_ID ->
+                            legacyHybridScopeId = value;
                     default -> log.debug("Ignoring unsupported Stalwart connector property: " + property.getName());
                 }
             }
@@ -243,6 +246,11 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
 
     private void registerHybridWorker() {
         HYBRID_WORKERS.put(hybridScopeId, this);
+        // 2.0.4 connections may still carry the old scope property. Keep
+        // draining that scope so already-persisted profile updates are not lost.
+        if (StringUtils.isNotBlank(legacyHybridScopeId) && !legacyHybridScopeId.equals(hybridScopeId)) {
+            HYBRID_WORKERS.put(legacyHybridScopeId.trim(), this);
+        }
         startOutboxScheduler();
     }
 
@@ -259,9 +267,9 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
             return thread;
         });
         hybridScheduler.scheduleAtFixedRate(() -> {
-            for (StalwartSCIMProvisioningConnector worker : HYBRID_WORKERS.values()) {
+            for (Map.Entry<String, StalwartSCIMProvisioningConnector> workerEntry : HYBRID_WORKERS.entrySet()) {
                 try {
-                    worker.flushHybridProfileOutbox();
+                    workerEntry.getValue().flushHybridProfileOutbox(workerEntry.getKey());
                 } catch (Throwable error) {
                     log.error("Unexpected failure in HYBRID profile outbox scheduler.", error);
                 }
@@ -295,16 +303,16 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
 
     private record HybridPatch(HybridProfileOutbox.Entry entry, String userId, String version) { }
 
-    private void flushHybridProfileOutbox() {
-        if (hybridProfileOutbox == null || StringUtils.isBlank(hybridScopeId)) return;
+    private void flushHybridProfileOutbox(String scope) {
+        if (hybridProfileOutbox == null || StringUtils.isBlank(scope)) return;
         String leaseOwner = java.util.UUID.randomUUID().toString();
         List<HybridProfileOutbox.Entry> claimed;
         try {
             // Keep the batch comfortably below Stalwart's 1000-operation and
             // 1 MiB limits even when every displayName is near its storage cap.
-            claimed = hybridProfileOutbox.claimBatch(hybridScopeId, 25, leaseOwner, 600_000L);
+            claimed = hybridProfileOutbox.claimBatch(scope, 25, leaseOwner, 600_000L);
         } catch (Exception e) {
-            log.error("Unable to claim durable HYBRID profile updates for scope " + hybridScopeId + ".", e);
+            log.error("Unable to claim durable HYBRID profile updates for scope " + scope + ".", e);
             return;
         }
         if (claimed.isEmpty()) return;
