@@ -64,14 +64,16 @@ public final class HybridProfileOutbox {
                 connection.setAutoCommit(false);
                 try {
                     int currentPriority = -1;
+                    String currentStatus = null;
                     boolean exists = false;
                     try (PreparedStatement select = connection.prepareStatement(
-                            "SELECT PRIORITY FROM " + TABLE + " WHERE ENTRY_KEY = ? FOR UPDATE")) {
+                            "SELECT PRIORITY,STATUS FROM " + TABLE + " WHERE ENTRY_KEY = ? FOR UPDATE")) {
                         select.setString(1, key);
                         try (ResultSet rs = select.executeQuery()) {
                             if (rs.next()) {
                                 exists = true;
                                 currentPriority = rs.getInt(1);
+                                currentStatus = rs.getString(2);
                             }
                         }
                     }
@@ -79,7 +81,8 @@ public final class HybridProfileOutbox {
                     if (exists) {
                         // Event-derived authoritative snapshots outrank connector
                         // callbacks, which may carry only partial claim mappings.
-                        if (priority >= currentPriority) {
+                        if ("SENT".equals(currentStatus) || "DEAD".equals(currentStatus)
+                                || priority >= currentPriority) {
                             try (PreparedStatement update = connection.prepareStatement(
                                     "UPDATE " + TABLE + " SET DISPLAY_NAME=?, SOURCE=?, PRIORITY=?, "
                                             + "STATUS='PENDING', ATTEMPTS=0, NEXT_ATTEMPT_AT=?, "
@@ -224,8 +227,13 @@ public final class HybridProfileOutbox {
         try (Connection connection = dataSource.getConnection()) {
             DatabaseMetaData metadata = connection.getMetaData();
             boolean found = false;
-            try (ResultSet tables = metadata.getTables(null, null, TABLE, new String[]{"TABLE"})) {
-                found = tables.next();
+            try (ResultSet tables = metadata.getTables(null, null, "%", new String[]{"TABLE"})) {
+                while (tables.next()) {
+                    if (TABLE.equalsIgnoreCase(tables.getString("TABLE_NAME"))) {
+                        found = true;
+                        break;
+                    }
+                }
             }
             if (found) return;
             try (Statement statement = connection.createStatement()) {
@@ -246,9 +254,16 @@ public final class HybridProfileOutbox {
                         + "UPDATED_AT BIGINT NOT NULL)");
             } catch (SQLException e) {
                 // Another WSO2 node may have created the shared table concurrently.
-                try (ResultSet tables = metadata.getTables(null, null, TABLE, new String[]{"TABLE"})) {
-                    if (!tables.next()) throw e;
+                boolean tableNowExists = false;
+                try (ResultSet tables = metadata.getTables(null, null, "%", new String[]{"TABLE"})) {
+                    while (tables.next()) {
+                        if (TABLE.equalsIgnoreCase(tables.getString("TABLE_NAME"))) {
+                            tableNowExists = true;
+                            break;
+                        }
+                    }
                 }
+                if (!tableNowExists) throw e;
             }
         }
     }
