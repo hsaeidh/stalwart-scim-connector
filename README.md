@@ -381,50 +381,43 @@ Current Stalwart configuration is primarily stored as configuration objects in i
 
 Do not put the SCIM Bearer token in a public repository or an example configuration file. Store it only in the confidential WSO2 connection property and protect backups of WSO2 configuration/database data.
 
-## 8. Install the OSGi bundle
+## 8. Install the 2.0.3 development bundles
+
+> **Development/testing only.** The 2.0.3 line is not release-ready. HYBRID queueing and live WSO2/Stalwart integration have not yet passed their required tests. The event observer is optional and observation-only.
 
 ### Build from source
-
-Clone the repository and select the 2.0.1 branch:
 
 ~~~bash
 git clone https://github.com/hsaeidh/stalwart-scim-connector.git
 cd stalwart-scim-connector
-git checkout release/2.0.1
-~~~
-
-Build and run the project verification:
-
-~~~bash
+git checkout feature/hybrid-bulk-2.0.3
 mvn -B -ntp clean verify
 ~~~
 
-The distributable bundle is:
+The build produces two separate OSGi bundles:
 
 ~~~text
-components/org.stalwart.identity.provisioning.connector.scim/target/org.stalwart.identity.provisioning.connector.scim-2.0.1.jar
+components/org.stalwart.identity.provisioning.connector.scim/target/org.stalwart.identity.provisioning.connector.scim-2.0.3-SNAPSHOT.jar
+components/org.stalwart.identity.provisioning.event.handler/target/org.stalwart.identity.provisioning.event.handler-2.0.3-SNAPSHOT.jar
 ~~~
 
-### Install in Docker WSO2
+The first bundle registers the outbound provisioning connector. The second registers the optional WSO2 profile event observer. Do not install the observer bundle unless you intend to run the event-delivery tests.
 
-The following commands use the container name wso2-identity-wso2-1 and WSO2 home /home/wso2carbon/wso2is-7.3.0. Adjust them for your deployment.
+### Install in Docker WSO2 IS 7.3.0
 
-Back up and move older copies of this connector out of dropins so WSO2 does not load multiple versions:
+The following commands use container name `wso2-identity-wso2-1` and WSO2 home `/home/wso2carbon/wso2is-7.3.0`. Adjust them for your deployment.
+
+Remove older copies of both custom bundles from `dropins` before copying the new versions. Keep a backup according to your normal change-management procedure.
 
 ~~~cmd
-docker exec wso2-identity-wso2-1 sh -c "D=/home/wso2carbon/wso2is-7.3.0/repository/components/dropins; B=/home/wso2carbon/wso2is-7.3.0/repository/components/backup/stalwart-scim; mkdir -p $B; find $D -maxdepth 1 -type f -name 'org.stalwart.identity.provisioning.connector.scim-*.jar' -exec mv -f {} $B/ \;"
+docker exec wso2-identity-wso2-1 sh -c "D=/home/wso2carbon/wso2is-7.3.0/repository/components/dropins; B=/home/wso2carbon/wso2is-7.3.0/repository/components/backup/stalwart-scim; mkdir -p $B; find $D -maxdepth 1 -type f \( -name 'org.stalwart.identity.provisioning.connector.scim-*.jar' -o -name 'org.stalwart.identity.provisioning.event.handler-*.jar' \) -exec mv -f {} $B/ \;"
 ~~~
 
-Copy the built JAR from the Windows host:
+Copy both bundles from the Windows host:
 
 ~~~cmd
-docker cp "C:\path\org.stalwart.identity.provisioning.connector.scim-2.0.1.jar" wso2-identity-wso2-1:/home/wso2carbon/wso2is-7.3.0/repository/components/dropins/
-~~~
-
-Check the JAR:
-
-~~~cmd
-docker exec wso2-identity-wso2-1 sh -c "ls -lh /home/wso2carbon/wso2is-7.3.0/repository/components/dropins/org.stalwart.identity.provisioning.connector.scim-2.0.1.jar"
+docker cp "C:\path\org.stalwart.identity.provisioning.connector.scim-2.0.3-SNAPSHOT.jar" wso2-identity-wso2-1:/home/wso2carbon/wso2is-7.3.0/repository/components/dropins/
+docker cp "C:\path\org.stalwart.identity.provisioning.event.handler-2.0.3-SNAPSHOT.jar" wso2-identity-wso2-1:/home/wso2carbon/wso2is-7.3.0/repository/components/dropins/
 ~~~
 
 Restart WSO2:
@@ -438,18 +431,25 @@ docker restart wso2-identity-wso2-1
 ~~~bash
 IS_HOME=/path/to/wso2is-7.3.0
 DROPINS="$IS_HOME/repository/components/dropins"
-BACKUP="$IS_HOME/repository/components/backup/stalwart-scim"
 
-mkdir -p "$BACKUP"
-find "$DROPINS" -maxdepth 1 -type f \
-  -name 'org.stalwart.identity.provisioning.connector.scim-*.jar' \
-  -exec mv -f {} "$BACKUP"/ \;
-
-cp components/org.stalwart.identity.provisioning.connector.scim/target/org.stalwart.identity.provisioning.connector.scim-2.0.1.jar "$DROPINS"/
-chown wso2carbon:wso2 "$DROPINS/org.stalwart.identity.provisioning.connector.scim-2.0.1.jar"
+cp components/org.stalwart.identity.provisioning.connector.scim/target/org.stalwart.identity.provisioning.connector.scim-2.0.3-SNAPSHOT.jar "$DROPINS"/
+cp components/org.stalwart.identity.provisioning.event.handler/target/org.stalwart.identity.provisioning.event.handler-2.0.3-SNAPSHOT.jar "$DROPINS"/
+chown wso2carbon:wso2 "$DROPINS"/org.stalwart.identity.provisioning.*-2.0.3-SNAPSHOT.jar
 ~~~
 
 Restart WSO2 using the normal service manager or startup procedure.
+
+### Enable the optional event observer
+
+Add this only in the test environment to `repository/conf/deployment.toml`:
+
+~~~toml
+[[event_handler]]
+name = "stalwart.scim.profile.observer"
+subscriptions = ["POST_ADD_USER", "POST_SET_USER_CLAIMS"]
+~~~
+
+The observer logs the event type, a hashed user reference, whether the user-store manager was available, and whether the three configured name claims were present in the event. It does not read or log claim values, call Stalwart, or enqueue profile updates. Use it to determine whether UI operations and CSV imports publish the expected events.
 
 ## 9. Verify OSGi activation and connector discovery
 
@@ -470,14 +470,14 @@ grep -i 'STALWART-SCIM' /path/to/wso2is-7.3.0/repository/logs/wso2carbon.log
 The successful sequence should include:
 
 ~~~text
->>> STALWART-SCIM STATIC INIT ENTERING v2.0.1
->>> STALWART-SCIM STATIC INIT DONE v2.0.1
->>> STALWART-SCIM CONSTRUCTOR v2.0.1
->>> STALWART-SCIM ACTIVATE START v2.0.1
+>>> STALWART-SCIM STATIC INIT ENTERING v2.0.3
+>>> STALWART-SCIM STATIC INIT DONE v2.0.3
+>>> STALWART-SCIM CONSTRUCTOR v2.0.3
+>>> STALWART-SCIM ACTIVATE START v2.0.3
 >>> STALWART-SCIM Factory created: ...
 >>> STALWART-SCIM Connector type: stalwart-scim
 >>> STALWART-SCIM Service registered: ...
->>> STALWART-SCIM ACTIVATE END v2.0.1 — READY
+>>> STALWART-SCIM ACTIVATE END v2.0.3 — READY
 ~~~
 
 Interpretation:
