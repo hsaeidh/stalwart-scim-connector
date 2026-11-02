@@ -426,6 +426,113 @@ public final class StalwartSCIMFactorySmokeTest {
         }
     }
 
+    private static void assertDurableBulkOutboxSurvivesReopen() {
+        try {
+            JdbcDataSource dataSource = new JdbcDataSource();
+            dataSource.setURL("jdbc:h2:mem:stalwart_bulk_restart;DB_CLOSE_DELAY=-1");
+            ScimOperationOutbox firstProcess = new ScimOperationOutbox(dataSource);
+            JsonObject patch = new JsonObject();
+            patch.addProperty("marker", "persisted-before-network");
+            String id = firstProcess.enqueue("restart-scope", "https://mail.example.com/scim/v2",
+                    "PATCH", "/Users/user-1", patch.toString());
+
+            // A new outbox instance represents a newly initialized connector
+            // after a WSO2 process restart. It must see the committed pending row.
+            ScimOperationOutbox restartedProcess = new ScimOperationOutbox(dataSource);
+            List<ScimOperationOutbox.Entry> recovered = restartedProcess.claimBatch(
+                    "restart-scope", 10, "restarted-node", 60_000L);
+            if (recovered.size() != 1 || !id.equals(recovered.get(0).id())
+                    || !"PATCH".equals(recovered.get(0).method())
+                    || !"/Users/user-1".equals(recovered.get(0).path())
+                    || !patch.toString().equals(recovered.get(0).dataJson())) {
+                throw new IllegalStateException("A committed Bulk operation was not recovered after outbox re-open.");
+            }
+            restartedProcess.markSent(id, "restarted-node", null);
+            if (!"SENT".equals(restartedProcess.getResult(id).status())) {
+                throw new IllegalStateException("Recovered Bulk operation was not acknowledged.");
+            }
+        } catch (Exception e) {
+            throw new IllegalStateException("Durable Bulk outbox restart smoke test failed.", e);
+        }
+    }
+
+    private static void assertDurableBulkOutboxBatchesMultipleOperations() {
+        HttpServer server = null;
+        try {
+            JdbcDataSource dataSource = new JdbcDataSource();
+            dataSource.setURL("jdbc:h2:mem:stalwart_bulk_batch;DB_CLOSE_DELAY=-1");
+            ScimOperationOutbox outbox = new ScimOperationOutbox(dataSource);
+            String scope = "bulk-batch-scope";
+            JsonObject patchOne = new JsonObject();
+            patchOne.addProperty("schemas", "urn:ietf:params:scim:api:messages:2.0:PatchOp");
+            JsonObject patchTwo = new JsonObject();
+            patchTwo.addProperty("schemas", "urn:ietf:params:scim:api:messages:2.0:PatchOp");
+            String idOne = outbox.enqueue(scope, "http://127.0.0.1:1/scim/v2",
+                    "PATCH", "/Users/user-1", patchOne.toString());
+            String idTwo = outbox.enqueue(scope, "http://127.0.0.1:1/scim/v2",
+                    "PATCH", "/Users/user-2", patchTwo.toString());
+
+            AtomicReference<String> payload = new AtomicReference<>();
+            AtomicInteger requestCount = new AtomicInteger();
+            server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+            server.createContext("/scim/v2/Bulk", exchange -> {
+                requestCount.incrementAndGet();
+                payload.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+                JsonObject response = new JsonObject();
+                com.google.gson.JsonArray results = new com.google.gson.JsonArray();
+                for (int i = 0; i < 2; i++) {
+                    JsonObject result = new JsonObject();
+                    result.addProperty("status", "204");
+                    results.add(result);
+                }
+                response.add("Operations", results);
+                byte[] bytes = response.toString().getBytes(StandardCharsets.UTF_8);
+                exchange.getResponseHeaders().set("Content-Type", "application/scim+json");
+                exchange.sendResponseHeaders(200, bytes.length);
+                try (var output = exchange.getResponseBody()) { output.write(bytes); }
+            });
+            server.start();
+
+            String endpoint = "http://127.0.0.1:" + server.getAddress().getPort() + "/scim/v2";
+            // Recreate the pending entries under the actual test endpoint.
+            ScimOperationOutbox activeOutbox = new ScimOperationOutbox(dataSource);
+            // The test rows above deliberately target a non-routable URL; remove
+            // their scope from this worker and create the actual routable batch.
+            String activeScope = "active-bulk-batch-scope";
+            String activeOne = activeOutbox.enqueue(activeScope, endpoint, "PATCH", "/Users/user-1",
+                    patchOne.toString());
+            String activeTwo = activeOutbox.enqueue(activeScope, endpoint, "PATCH", "/Users/user-2",
+                    patchTwo.toString());
+
+            StalwartSCIMProvisioningConnector connector = new StalwartSCIMProvisioningConnector();
+            setField(connector, "baseUrl", endpoint);
+            setField(connector, "bearerToken", "smoke-test-token");
+            setField(connector, "provisioningMode", "BULK");
+            setField(connector, "scimOperationOutbox", activeOutbox);
+            setField(connector, "scimOperationScope", activeScope);
+            setField(connector, "bulkRequestTimeoutMs", 30000);
+            setField(connector, "bulkMaxPayloadBytes", 900000);
+            setField(connector, "bulkFallbackToIndividual", true);
+
+            Method flush = StalwartSCIMProvisioningConnector.class.getDeclaredMethod("flushScimOperationOutbox");
+            flush.setAccessible(true);
+            flush.invoke(connector);
+
+            JsonObject sent = JsonParser.parseString(payload.get()).getAsJsonObject();
+            if (requestCount.get() != 1 || sent.getAsJsonArray("Operations").size() != 2) {
+                throw new IllegalStateException("Pending durable operations were not combined into one Bulk request.");
+            }
+            if (!"SENT".equals(activeOutbox.getResult(activeOne).status())
+                    || !"SENT".equals(activeOutbox.getResult(activeTwo).status())) {
+                throw new IllegalStateException("Bulk operation results were not acknowledged individually.");
+            }
+        } catch (Exception e) {
+            throw new IllegalStateException("Durable multi-operation Bulk batching smoke test failed.", e);
+        } finally {
+            if (server != null) server.stop(0);
+        }
+    }
+
     private static void assertHybridSchedulerSendsMultiOperationBulkPatch() {
         HttpServer server = null;
         try {
