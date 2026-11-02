@@ -397,8 +397,6 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
             reconcileHybridBatch(pending, leaseOwner, "Bulk flush interrupted; outcome may be unknown.");
         } catch (JsonParseException | IllegalStateException | IllegalArgumentException e) {
             reconcileHybridBatch(pending, leaseOwner, "Invalid Bulk response; outcome may be unknown: " + e);
-        } catch (IdentityProvisioningException e) {
-            for (HybridPatch item : pending) markHybridRetry(item.entry(), leaseOwner, e.getMessage());
         } catch (SQLException e) {
             log.error("Unable to update HYBRID outbox state after Stalwart response.", e);
         }
