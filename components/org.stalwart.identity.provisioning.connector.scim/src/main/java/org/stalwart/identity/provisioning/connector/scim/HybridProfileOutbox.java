@@ -151,6 +151,13 @@ public final class HybridProfileOutbox {
         try (Connection connection = dataSource.getConnection()) {
             connection.setAutoCommit(false);
             try {
+                // Retain successful audit rows for 30 days; DEAD rows remain
+                // available for operator inspection until explicitly handled.
+                try (PreparedStatement purge = connection.prepareStatement(
+                        "DELETE FROM " + TABLE + " WHERE STATUS='SENT' AND UPDATED_AT<?")) {
+                    purge.setLong(1, now - 30L * 24 * 60 * 60 * 1000);
+                    purge.executeUpdate();
+                }
                 try (PreparedStatement select = connection.prepareStatement(
                         "SELECT ENTRY_KEY,SCOPE_KEY,EXTERNAL_ID,DISPLAY_NAME,SOURCE,PRIORITY,ATTEMPTS "
                                 + "FROM " + TABLE + " WHERE SCOPE_KEY=? AND STATUS IN ('PENDING','IN_FLIGHT') "
