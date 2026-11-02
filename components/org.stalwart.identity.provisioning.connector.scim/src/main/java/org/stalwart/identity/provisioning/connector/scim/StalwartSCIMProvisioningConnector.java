@@ -163,24 +163,6 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
         if ("HYBRID".equals(provisioningMode) && !enableProfileUpdates) {
             throw new IdentityProvisioningException("HYBRID mode requires enable-profile-updates=true.");
         }
-        if ("HYBRID".equals(provisioningMode) || "BULK".equals(provisioningMode)) {
-            try {
-                hybridScopeId = buildOutboxScope(baseUrl, userStoreDomainName, bearerToken);
-                hybridProfileOutbox = HybridProfileOutbox.lookup(hybridOutboxJndiName);
-                if ("BULK".equals(provisioningMode)) {
-                    scimOperationOutbox = ScimOperationOutbox.lookup(hybridOutboxJndiName);
-                    scimOperationScope = buildOutboxScope(baseUrl, userStoreDomainName, bearerToken);
-                    registerBulkWorker();
-                }
-                if ("HYBRID".equals(provisioningMode)) {
-                    registerHybridWorker();
-                }
-            } catch (Exception e) {
-                throw new IdentityProvisioningException(
-                        "Unable to initialize the durable Stalwart SCIM outbox using WSO2 Carbon DataSource "
-                                + hybridOutboxJndiName + ".", e);
-            }
-        }
         if (bulkRequestTimeoutMs < 1000 || bulkRequestTimeoutMs > 120000) {
             throw new IdentityProvisioningException("bulk-request-timeout-ms must be between 1000 and 120000.");
         }
@@ -226,13 +208,20 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
         if (bearerToken.indexOf('\r') >= 0 || bearerToken.indexOf('\n') >= 0) {
             throw new IdentityProvisioningException("Stalwart SCIM bearer token contains an invalid line break.");
         }
-        if ("HYBRID".equals(provisioningMode)) {
+        if ("HYBRID".equals(provisioningMode) || "BULK".equals(provisioningMode)) {
             try {
+                hybridScopeId = buildOutboxScope(baseUrl, userStoreDomainName, bearerToken);
                 hybridProfileOutbox = HybridProfileOutbox.lookup(hybridOutboxJndiName);
-                registerHybridWorker();
+                if ("BULK".equals(provisioningMode)) {
+                    scimOperationOutbox = ScimOperationOutbox.lookup(hybridOutboxJndiName);
+                    scimOperationScope = hybridScopeId;
+                    registerBulkWorker();
+                } else {
+                    registerHybridWorker();
+                }
             } catch (Exception e) {
                 throw new IdentityProvisioningException(
-                        "Unable to initialize the durable HYBRID profile outbox from JNDI resource "
+                        "Unable to initialize the durable Stalwart SCIM outbox using WSO2 Carbon DataSource "
                                 + hybridOutboxJndiName + ".", e);
             }
         }
