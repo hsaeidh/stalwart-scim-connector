@@ -1143,7 +1143,7 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
             if ((httpStatus == 404 || httpStatus == 405 || httpStatus == 501) && bulkFallbackToIndividual) {
                 bulkUnsupportedEndpoints.put(endpoint, Boolean.TRUE);
                 log.warn("SCIM Bulk endpoint unavailable; delivering durable queued operations individually.");
-                sendDurableIndividualFallback(endpoint, entries, bodies);
+                sendDurableIndividualFallback(endpoint, entries);
                 return;
             }
             if (httpStatus < 200 || httpStatus >= 300) {
