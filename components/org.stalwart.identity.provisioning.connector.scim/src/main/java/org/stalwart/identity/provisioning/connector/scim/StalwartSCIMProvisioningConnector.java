@@ -427,19 +427,22 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
         String given = mappedValue(attrs, givenNameClaimUri);
         String family = mappedValue(attrs, familyNameClaimUri);
         String display = mappedValue(attrs, displayNameClaimUri);
-        // Stalwart persists one display name. Prefer the explicit WSO2
-        // displayName claim; otherwise compose it from the supplied name parts.
-        // WSO2 should include both name parts in the update event when no
-        // displayName claim is available, so a partial event cannot erase a name.
-        if (includeProfile && StringUtils.isNotBlank(display)) {
-            addReplace(operations, "displayName", display.trim());
-        } else if (includeProfile && (StringUtils.isNotBlank(given) || StringUtils.isNotBlank(family))) {
+        // OR trigger semantics: either name part is a profile-change signal.
+        // When a name part is present, it takes precedence over a possibly stale
+        // displayName in the same partial event. Both current name parts are
+        // required here; the WSO2 event observer is responsible for verifying
+        // whether the event provides the changed-claim set and complete snapshot.
+        if (includeProfile && (StringUtils.isNotBlank(given) || StringUtils.isNotBlank(family))) {
             if (StringUtils.isNotBlank(given) && StringUtils.isNotBlank(family)) {
                 addReplace(operations, "displayName", joinName(given, family));
             } else {
                 throw new IdentityProvisioningException(
-                        "Stalwart stores a single displayName. Supply the displayName claim or both givenName and familyName claims in the update event.");
+                        "FIRSTNAME or LASTNAME changed, but the complete current name snapshot is unavailable. "
+                                + "A stale displayName was not used; the profile update must be reconciled from WSO2.");
             }
+        } else if (includeProfile && StringUtils.isNotBlank(display)) {
+            // DISPLAYNAME-only changes use the explicit current displayName claim.
+            addReplace(operations, "displayName", display.trim());
         }
 
         return patchDocument(operations);
