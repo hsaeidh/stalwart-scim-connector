@@ -223,6 +223,218 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
         }
     }
 
+    private void registerHybridWorker() {
+        HYBRID_WORKERS.put(hybridScopeId, this);
+        if (HYBRID_SCHEDULER_STARTED.compareAndSet(false, true)) {
+            hybridScheduler = Executors.newSingleThreadScheduledExecutor(task -> {
+                Thread thread = new Thread(task, "stalwart-scim-hybrid-outbox");
+                thread.setDaemon(true);
+                return thread;
+            });
+            hybridScheduler.scheduleAtFixedRate(() -> {
+                for (StalwartSCIMProvisioningConnector worker : HYBRID_WORKERS.values()) {
+                    try {
+                        worker.flushHybridProfileOutbox();
+                    } catch (Throwable error) {
+                        log.error("Unexpected failure in HYBRID profile outbox scheduler.", error);
+                    }
+                }
+            }, 5, 5, TimeUnit.MINUTES);
+        }
+    }
+
+    /**
+     * Called by the OSGi component during bundle shutdown. Pending rows remain
+     * durable and are reclaimed by another WSO2 node or after the next restart.
+     */
+    public static void shutdownHybridScheduler() {
+        ScheduledExecutorService scheduler = hybridScheduler;
+        hybridScheduler = null;
+        if (scheduler != null) {
+            scheduler.shutdownNow();
+        }
+        HYBRID_WORKERS.clear();
+        HYBRID_SCHEDULER_STARTED.set(false);
+    }
+
+    private record HybridPatch(HybridProfileOutbox.Entry entry, String userId, String version) { }
+
+    private void flushHybridProfileOutbox() {
+        if (hybridProfileOutbox == null || StringUtils.isBlank(hybridScopeId)) return;
+        String leaseOwner = java.util.UUID.randomUUID().toString();
+        List<HybridProfileOutbox.Entry> claimed;
+        try {
+            // Keep the batch comfortably below Stalwart's 1000-operation and
+            // 1 MiB limits even when every displayName is near its storage cap.
+            claimed = hybridProfileOutbox.claimBatch(hybridScopeId, 25, leaseOwner, 600_000L);
+        } catch (Exception e) {
+            log.error("Unable to claim durable HYBRID profile updates for scope " + hybridScopeId + ".", e);
+            return;
+        }
+        if (claimed.isEmpty()) return;
+
+        List<HybridPatch> pending = new ArrayList<>();
+        for (HybridProfileOutbox.Entry entry : claimed) {
+            try {
+                String id = findResourceId("Users", "externalId", entry.externalId());
+                if (id == null) {
+                    hybridProfileOutbox.markRetry(entry, leaseOwner,
+                            "No Stalwart User was found for the queued immutable externalId.", 10);
+                    continue;
+                }
+                JsonObject current = request("GET", "/Users/" + pathSegment(id), null);
+                String currentName = current.has("displayName") && !current.get("displayName").isJsonNull()
+                        ? current.get("displayName").getAsString() : null;
+                if (entry.displayName().equals(currentName)) {
+                    hybridProfileOutbox.markSent(entry.key(), leaseOwner);
+                    continue;
+                }
+                String version = null;
+                if (current.has("meta") && current.get("meta").isJsonObject()) {
+                    JsonObject meta = current.getAsJsonObject("meta");
+                    if (meta.has("version") && !meta.get("version").isJsonNull()) {
+                        version = meta.get("version").getAsString();
+                    }
+                }
+                pending.add(new HybridPatch(entry, id, version));
+            } catch (Exception e) {
+                markHybridRetry(entry, leaseOwner, "Unable to resolve or read the queued Stalwart user: " + e);
+            }
+        }
+        if (pending.isEmpty()) return;
+
+        JsonArray operations = new JsonArray();
+        for (HybridPatch item : pending) {
+            JsonArray patchOperations = new JsonArray();
+            addReplace(patchOperations, "displayName", item.entry().displayName());
+            JsonObject operation = new JsonObject();
+            operation.addProperty("method", "PATCH");
+            operation.addProperty("path", "/Users/" + pathSegment(item.userId()));
+            operation.add("data", patchDocument(patchOperations));
+            // RFC 7644 Bulk Operation version carries the resource ETag when
+            // the target exposes one; omit it when Stalwart does not.
+            if (StringUtils.isNotBlank(item.version())) operation.addProperty("version", item.version());
+            operations.add(operation);
+        }
+        JsonObject bulkRequest = new JsonObject();
+        JsonArray schemas = new JsonArray();
+        schemas.add("urn:ietf:params:scim:api:messages:2.0:BulkRequest");
+        bulkRequest.add("schemas", schemas);
+        bulkRequest.add("Operations", operations);
+        String payload = bulkRequest.toString();
+        if (payload.getBytes(StandardCharsets.UTF_8).length > bulkMaxPayloadBytes) {
+            for (HybridPatch item : pending) {
+                markHybridRetry(item.entry(), leaseOwner,
+                        "HYBRID Bulk payload exceeds bulk-max-payload-bytes; no request was sent.");
+            }
+            return;
+        }
+
+        HttpRequest httpRequest = HttpRequest.newBuilder()
+                .uri(URI.create(profileUpdateBaseUrl() + "/Bulk"))
+                .timeout(Duration.ofMillis(bulkRequestTimeoutMs))
+                .header("Authorization", "Bearer " + bearerToken)
+                .header("Accept", "application/scim+json")
+                .header("Content-Type", "application/scim+json")
+                .POST(HttpRequest.BodyPublishers.ofString(payload))
+                .build();
+        try {
+            HttpResponse<String> response = sendWithLimit(httpRequest);
+            int status = response.statusCode();
+            if ((status == 404 || status == 405 || status == 501) && bulkFallbackToIndividual) {
+                bulkUnsupportedEndpoints.put(profileUpdateBaseUrl(), Boolean.TRUE);
+                log.warn("Stalwart Bulk endpoint is unavailable for HYBRID profile updates; using individual PATCH fallback.");
+                for (HybridPatch item : pending) {
+                    try {
+                        JsonArray patchOperations = new JsonArray();
+                        addReplace(patchOperations, "displayName", item.entry().displayName());
+                        requestAtIndividual(profileUpdateBaseUrl(), "PATCH",
+                                "/Users/" + pathSegment(item.userId()), patchDocument(patchOperations));
+                        hybridProfileOutbox.markSent(item.entry().key(), leaseOwner);
+                    } catch (Exception e) {
+                        markHybridRetry(item.entry(), leaseOwner, "Individual fallback failed: " + e);
+                    }
+                }
+                return;
+            }
+            if (status < 200 || status >= 300) {
+                for (HybridPatch item : pending) {
+                    markHybridRetry(item.entry(), leaseOwner,
+                            "Stalwart HYBRID Bulk endpoint returned HTTP " + status + ": " + abbreviate(response.body()));
+                }
+                return;
+            }
+            JsonObject result = StringUtils.isBlank(response.body())
+                    ? new JsonObject() : JsonParser.parseString(response.body()).getAsJsonObject();
+            JsonArray results = result.has("Operations") && result.get("Operations").isJsonArray()
+                    ? result.getAsJsonArray("Operations") : new JsonArray();
+            if (results.size() != pending.size()) {
+                reconcileHybridBatch(pending, leaseOwner,
+                        "Bulk response operation count did not match the submitted batch.");
+                return;
+            }
+            for (int i = 0; i < pending.size(); i++) {
+                HybridPatch item = pending.get(i);
+                JsonObject operationResult = results.get(i).getAsJsonObject();
+                int operationStatus = parseBulkOperationStatus(operationResult);
+                if (operationStatus >= 200 && operationStatus < 300) {
+                    hybridProfileOutbox.markSent(item.entry().key(), leaseOwner);
+                } else {
+                    markHybridRetry(item.entry(), leaseOwner,
+                            "Stalwart Bulk PATCH operation failed with status " + operationStatus
+                                    + ": " + abbreviate(operationResult.toString()));
+                }
+            }
+        } catch (IOException e) {
+            // The server may have committed some or all PATCH operations. Read
+            // each resource before deciding whether an item can be acknowledged.
+            reconcileHybridBatch(pending, leaseOwner, "Ambiguous Bulk I/O outcome: " + e);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            reconcileHybridBatch(pending, leaseOwner, "Bulk flush interrupted; outcome may be unknown.");
+        } catch (JsonParseException | IllegalStateException | IllegalArgumentException e) {
+            reconcileHybridBatch(pending, leaseOwner, "Invalid Bulk response; outcome may be unknown: " + e);
+        } catch (IdentityProvisioningException e) {
+            for (HybridPatch item : pending) markHybridRetry(item.entry(), leaseOwner, e.getMessage());
+        } catch (SQLException e) {
+            log.error("Unable to update HYBRID outbox state after Stalwart response.", e);
+        }
+    }
+
+    private int parseBulkOperationStatus(JsonObject operation) {
+        if (operation == null || !operation.has("status") || operation.get("status").isJsonNull()) return 0;
+        try {
+            return Integer.parseInt(operation.get("status").getAsString());
+        } catch (NumberFormatException e) {
+            return 0;
+        }
+    }
+
+    private void reconcileHybridBatch(List<HybridPatch> pending, String leaseOwner, String reason) {
+        for (HybridPatch item : pending) {
+            try {
+                JsonObject current = request("GET", "/Users/" + pathSegment(item.userId()), null);
+                String currentName = current.has("displayName") && !current.get("displayName").isJsonNull()
+                        ? current.get("displayName").getAsString() : null;
+                if (item.entry().displayName().equals(currentName)) {
+                    hybridProfileOutbox.markSent(item.entry().key(), leaseOwner);
+                } else {
+                    markHybridRetry(item.entry(), leaseOwner, reason);
+                }
+            } catch (Exception e) {
+                markHybridRetry(item.entry(), leaseOwner, reason + "; reconciliation read failed: " + e);
+            }
+        }
+    }
+
+    private void markHybridRetry(HybridProfileOutbox.Entry entry, String leaseOwner, String reason) {
+        try {
+            hybridProfileOutbox.markRetry(entry, leaseOwner, reason, 10);
+        } catch (Exception e) {
+            log.error("Unable to persist HYBRID retry state for entry " + entry.key() + ".", e);
+        }
+    }
+
     @Override
     public ProvisionedIdentifier provision(ProvisioningEntity entity) throws IdentityProvisioningException {
         if (entity == null) {
