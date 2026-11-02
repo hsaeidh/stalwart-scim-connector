@@ -547,13 +547,6 @@ public final class StalwartSCIMFactorySmokeTest {
      */
     private static void assertIdentityAndEmailOnlyUpdatesAreIgnored() {
         try {
-            StalwartSCIMProvisioningConnector connector = new StalwartSCIMProvisioningConnector();
-            setField(connector, "baseUrl", "http://127.0.0.1:1/scim/v2");
-            setField(connector, "bearerToken", "smoke-test-token");
-            setField(connector, "provisioningMode", "INDIVIDUAL");
-            setField(connector, "enableProfileUpdates", true);
-            setField(connector, "activeClaimUri", "");
-
             ClaimMapping primaryEmail = ClaimMapping.build(
                     "http://wso2.org/claims/emailaddress", null, null, false);
             ClaimMapping localUsername = ClaimMapping.build(
@@ -570,10 +563,18 @@ public final class StalwartSCIMFactorySmokeTest {
                     Map.of(emails, List.of("alias-removed@example.com")),
                     Map.of(localUsername, List.of("new-local-username"))
             );
-            for (Map<ClaimMapping, List<String>> attributes : ignoredUpdates) {
-                ProvisioningEntity update = new ProvisioningEntity(
-                        ProvisioningEntityType.USER, "1234567890", ProvisioningOperation.PATCH, attributes);
-                connector.provision(update);
+            for (String mode : List.of("INDIVIDUAL", "BULK", "HYBRID")) {
+                StalwartSCIMProvisioningConnector connector = new StalwartSCIMProvisioningConnector();
+                setField(connector, "baseUrl", "http://127.0.0.1:1/scim/v2");
+                setField(connector, "bearerToken", "smoke-test-token");
+                setField(connector, "provisioningMode", mode);
+                setField(connector, "enableProfileUpdates", true);
+                setField(connector, "activeClaimUri", "");
+                for (Map<ClaimMapping, List<String>> attributes : ignoredUpdates) {
+                    ProvisioningEntity update = new ProvisioningEntity(
+                            ProvisioningEntityType.USER, "1234567890", ProvisioningOperation.PATCH, attributes);
+                    connector.provision(update);
+                }
             }
         } catch (Exception e) {
             throw new IllegalStateException(
