@@ -1,6 +1,7 @@
 package org.stalwart.identity.provisioning.connector.scim;
 
 import org.wso2.carbon.identity.application.common.model.Property;
+import org.wso2.carbon.identity.application.common.model.ClaimMapping;
 import org.wso2.carbon.identity.provisioning.ProvisioningEntity;
 import org.wso2.carbon.identity.provisioning.ProvisioningEntityType;
 import org.wso2.carbon.identity.provisioning.ProvisioningOperation;
@@ -133,6 +134,7 @@ public final class StalwartSCIMFactorySmokeTest {
 
         assertBulkTransportRequest();
         assertStableEntityNameReconciliationWithoutEmailClaim();
+        assertUsernameCollisionReconcilesOnlySameExternalId();
 
         System.out.println("Connector type: " + factory.getConnectorType());
         System.out.println("Properties count: " + properties.size());
@@ -291,6 +293,85 @@ public final class StalwartSCIMFactorySmokeTest {
             }
         } catch (Exception e) {
             throw new IllegalStateException("Stable externalId reconciliation smoke test failed.", e);
+        } finally {
+            if (server != null) server.stop(0);
+        }
+    }
+
+    private static void assertUsernameCollisionReconcilesOnlySameExternalId() {
+        HttpServer server = null;
+        try {
+            AtomicInteger postCount = new AtomicInteger();
+            AtomicInteger userResourceReads = new AtomicInteger();
+            server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+            server.createContext("/scim/v2/Users", exchange -> {
+                String path = exchange.getRequestURI().getPath();
+                String method = exchange.getRequestMethod();
+                if ("GET".equals(method) && "/scim/v2/Users".equals(path)) {
+                    String query = exchange.getRequestURI().getRawQuery();
+                    JsonObject list = new JsonObject();
+                    com.google.gson.JsonArray resources = new com.google.gson.JsonArray();
+                    if (query != null && query.contains("userName")) {
+                        JsonObject resource = new JsonObject();
+                        resource.addProperty("id", "existing-id");
+                        resources.add(resource);
+                    }
+                    list.addProperty("totalResults", resources.size());
+                    list.add("Resources", resources);
+                    byte[] bytes = list.toString().getBytes(StandardCharsets.UTF_8);
+                    exchange.getResponseHeaders().set("Content-Type", "application/scim+json");
+                    exchange.sendResponseHeaders(200, bytes.length);
+                    try (var output = exchange.getResponseBody()) {
+                        output.write(bytes);
+                    }
+                    return;
+                }
+                if ("GET".equals(method) && "/scim/v2/Users/existing-id".equals(path)) {
+                    userResourceReads.incrementAndGet();
+                    JsonObject resource = new JsonObject();
+                    resource.addProperty("id", "existing-id");
+                    resource.addProperty("userName", "same@example.com");
+                    resource.addProperty("externalId", "1234567890");
+                    byte[] bytes = resource.toString().getBytes(StandardCharsets.UTF_8);
+                    exchange.getResponseHeaders().set("Content-Type", "application/scim+json");
+                    exchange.sendResponseHeaders(200, bytes.length);
+                    try (var output = exchange.getResponseBody()) {
+                        output.write(bytes);
+                    }
+                    return;
+                }
+                if ("POST".equals(method)) postCount.incrementAndGet();
+                exchange.sendResponseHeaders(404, -1);
+                exchange.close();
+            });
+            server.start();
+
+            String base = "http://127.0.0.1:" + server.getAddress().getPort() + "/scim/v2";
+            Property baseUrl = new Property();
+            baseUrl.setName(StalwartSCIMProvisioningConnectorConstants.BASE_URL);
+            baseUrl.setValue(base);
+            Property token = new Property();
+            token.setName(StalwartSCIMProvisioningConnectorConstants.BEARER_TOKEN);
+            token.setValue("smoke-test-token");
+            StalwartSCIMProvisioningConnector connector = new StalwartSCIMProvisioningConnector();
+            connector.init(new Property[]{baseUrl, token});
+
+            ClaimMapping email = ClaimMapping.build(
+                    "http://wso2.org/claims/emailaddress", null, null, false);
+            ClaimMapping externalId = ClaimMapping.build(
+                    "http://wso2.org/claims/username", null, null, false);
+            Map<ClaimMapping, List<String>> attributes = Map.of(
+                    email, List.of("same@example.com"),
+                    externalId, List.of("1234567890"));
+            ProvisioningEntity retry = new ProvisioningEntity(
+                    ProvisioningEntityType.USER, "1234567890", ProvisioningOperation.POST, attributes);
+            connector.provision(retry);
+
+            if (userResourceReads.get() != 1 || postCount.get() != 0) {
+                throw new IllegalStateException("A matching userName/externalId collision was not reconciled safely.");
+            }
+        } catch (Exception e) {
+            throw new IllegalStateException("Username/externalId conflict reconciliation smoke test failed.", e);
         } finally {
             if (server != null) server.stop(0);
         }
