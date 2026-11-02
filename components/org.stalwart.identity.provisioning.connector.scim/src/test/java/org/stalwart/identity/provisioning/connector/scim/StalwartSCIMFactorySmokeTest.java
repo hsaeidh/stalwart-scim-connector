@@ -285,7 +285,7 @@ public final class StalwartSCIMFactorySmokeTest {
                     ProvisioningEntityType.USER, "1234567890", ProvisioningOperation.DELETE, Map.of());
             connector.provision(delete);
 
-            if (getCount.get() != 2 || deleteCount.get() != 1 || postCount.get() != 0) {
+            if (getCount.get() != 1 || deleteCount.get() != 1 || postCount.get() != 0) {
                 throw new IllegalStateException("Stable entityName reconciliation failed: GET="
                         + getCount.get() + ", DELETE=" + deleteCount.get() + ", POST=" + postCount.get());
             }
