@@ -387,7 +387,7 @@ Do not put the SCIM Bearer token in a public repository or an example configurat
 
 ## 8. Install the 2.0.3 development bundles
 
-> **Development/testing only.** The 2.0.3 line is not release-ready. HYBRID queueing and live WSO2/Stalwart integration have not yet passed their required tests. The event observer is optional and observation-only.
+> **Development/testing only.** The 2.0.3 line is not release-ready. HYBRID queueing and live WSO2/Stalwart integration have not yet passed their required tests. The event-handler bundle is optional for INDIVIDUAL/BULK, but required for HYBRID profile updates.
 
 ### Build from source
 
@@ -405,7 +405,7 @@ components/org.stalwart.identity.provisioning.connector.scim/target/org.stalwart
 components/org.stalwart.identity.provisioning.event.handler/target/org.stalwart.identity.provisioning.event.handler-2.0.3-SNAPSHOT.jar
 ~~~
 
-The first bundle registers the outbound provisioning connector. The second registers the optional WSO2 profile event observer. Do not install the observer bundle unless you intend to run the event-delivery tests.
+The first bundle registers the outbound provisioning connector. The second registers the WSO2 profile event handler. Install both bundles when using HYBRID mode; for INDIVIDUAL/BULK the event-handler bundle is optional.
 
 ### Install in Docker WSO2 IS 7.3.0
 
@@ -443,7 +443,7 @@ chown wso2carbon:wso2 "$DROPINS"/org.stalwart.identity.provisioning.*-2.0.3-SNAP
 
 Restart WSO2 using the normal service manager or startup procedure.
 
-### Enable the optional event observer
+### Enable the WSO2 profile event handler
 
 Add this only in the test environment to `repository/conf/deployment.toml`:
 
@@ -453,11 +453,18 @@ name = "stalwart.scim.profile.observer"
 subscriptions = ["POST_ADD_USER", "POST_SET_USER_CLAIMS"]
 ~~~
 
-The observer logs the event type, a hashed user reference, whether the user-store manager was available, and whether the three configured name claims were present in the event. It does not read or log claim values, call Stalwart, or enqueue profile updates. Use it to determine whether UI operations and CSV imports publish the expected events.
+For INDIVIDUAL/BULK, leave `-Dstalwart.scim.hybrid.enabled` unset (false); the handler only logs event metadata. For HYBRID, set these JVM options on every WSO2 node:
+
+~~~text
+-Dstalwart.scim.hybrid.enabled=true
+-Dstalwart.scim.hybrid.outbox.jndi=jdbc/WSO2CarbonDB
+~~~
+
+With HYBRID enabled, `POST_SET_USER_CLAIMS` reads the complete current WSO2 claim snapshot and writes it to the durable outbox. It does not call Stalwart directly. The connector's `hybrid-scope-id` must match the event's tenant/user-store scope, optionally prefixed with the organization ID when the event provides one. Run UI and CSV-import tests to verify the actual event scope and that both update paths emit `POST_SET_USER_CLAIMS`; CSV behavior has not yet been verified in a live IS 7.3.0 environment.
 
 ## 9. Verify OSGi activation and connector discovery
 
-The OSGi bundle must be loaded and the Declarative Services component must register the factory. Version 2.0.1 keeps the diagnostic markers so the activation sequence can be checked.
+The OSGi bundle must be loaded and the Declarative Services component must register the factory. Version 2.0.3 keeps the diagnostic markers so the activation sequence can be checked.
 
 Docker:
 
