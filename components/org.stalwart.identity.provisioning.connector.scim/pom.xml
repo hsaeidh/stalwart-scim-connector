@@ -4,7 +4,7 @@
   <parent>
     <groupId>org.stalwart.identity.provisioning</groupId>
     <artifactId>identity-outbound-provisioning-stalwart-scim</artifactId>
-    <version>2.0.1</version>
+    <version>2.0.4-SNAPSHOT</version>
     <relativePath>../../pom.xml</relativePath>
   </parent>
   <artifactId>org.stalwart.identity.provisioning.connector.scim</artifactId>
@@ -22,6 +22,7 @@
     <dependency><groupId>org.wso2.carbon.identity.framework</groupId><artifactId>org.wso2.carbon.identity.core</artifactId></dependency>
     <dependency><groupId>org.wso2.carbon.identity.framework</groupId><artifactId>org.wso2.carbon.identity.provisioning</artifactId></dependency>
     <dependency><groupId>org.wso2.carbon.identity.framework</groupId><artifactId>org.wso2.carbon.identity.application.common</artifactId></dependency>
+    <dependency><groupId>com.h2database</groupId><artifactId>h2</artifactId><version>2.3.232</version><scope>test</scope></dependency>
     <dependency><groupId>org.osgi</groupId><artifactId>org.osgi.core</artifactId><version>6.0.0</version><scope>provided</scope></dependency>
     <dependency><groupId>org.osgi</groupId><artifactId>org.osgi.service.component</artifactId><version>1.5.1</version><scope>provided</scope></dependency>
     <dependency><groupId>org.osgi</groupId><artifactId>org.osgi.service.component.annotations</artifactId><version>1.5.1</version><scope>provided</scope></dependency>
@@ -76,7 +77,7 @@ Bundle-StartLevel: 1
 Bundle-ClassPath: .,lib/gson-2.11.0.jar
 -dsannotations: *
 -dsannotations-options: inherit
-Export-Package: !org.stalwart.identity.provisioning.connector.scim.internal,org.stalwart.identity.provisioning.connector.scim.*;version="${project.version}"
+Export-Package: !org.stalwart.identity.provisioning.connector.scim.internal,org.stalwart.identity.provisioning.connector.scim;version="${project.version}",org.stalwart.identity.provisioning.connector.scim.*;version="${project.version}"
 Import-Package: org.wso2.carbon.identity.provisioning;version="[7.10,8)",org.wso2.carbon.identity.application.common.model;version="[7.10,8)",!com.google.gson.* ,*
 Require-Capability: osgi.ee;filter:="(&(osgi.ee=JavaSE)(version>=21))"
           ]]></bnd>
