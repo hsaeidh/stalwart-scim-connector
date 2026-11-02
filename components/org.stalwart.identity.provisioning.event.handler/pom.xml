@@ -74,7 +74,7 @@
           <bnd><![CDATA[
 Bundle-SymbolicName: org.stalwart.identity.provisioning.event.handler
 Bundle-Version: ${project.version}
-Bundle-Name: Stalwart SCIM WSO2 Profile Event Observer
+Bundle-Name: Stalwart SCIM WSO2 Profile Event Handler
 Bundle-ActivationPolicy: lazy
 -dsannotations: *
 -dsannotations-options: inherit
