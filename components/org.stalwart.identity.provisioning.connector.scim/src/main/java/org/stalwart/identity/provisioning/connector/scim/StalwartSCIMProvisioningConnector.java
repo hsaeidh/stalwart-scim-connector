@@ -283,7 +283,10 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
         JsonObject existing = request("GET", "/Users/" + pathSegment(byUserName), null);
         String actualExternalId = existing.has("externalId") && !existing.get("externalId").isJsonNull()
                 ? existing.get("externalId").getAsString() : null;
-        if (externalId.equals(actualExternalId)) return byUserName;
+        if (externalId.equals(actualExternalId)) {
+            cacheResourceId("Users", "externalId", externalId, byUserName);
+            return byUserName;
+        }
 
         throw new IdentityProvisioningException(
                 "Stalwart userName already exists but belongs to a different externalId. "
