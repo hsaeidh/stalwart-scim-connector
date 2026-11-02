@@ -72,8 +72,8 @@ public class StalwartSCIMProvisioningConnectorFactory extends AbstractProvisioni
             properties.add(property(StalwartSCIMProvisioningConnectorConstants.EMAIL_MEMBERSHIP_GROUP,
                     "WSO2 group that grants email access", "Email", false, false, 15));
             Property mode = property(StalwartSCIMProvisioningConnectorConstants.PROVISIONING_MODE,
-                    "Provisioning Mode (INDIVIDUAL or BULK)", "INDIVIDUAL", false, false, 16);
-            mode.setDescription("INDIVIDUAL رفتار فعلی کانکتور است. BULK هر عملیات تغییردهنده را به‌صورت هم‌زمان از endpoint استاندارد SCIM Bulk ارسال می‌کند.");
+                    "Provisioning Mode (INDIVIDUAL, BULK or HYBRID)", "INDIVIDUAL", false, false, 16);
+            mode.setDescription("INDIVIDUAL رفتار هم‌زمان مستقل است. BULK هر عملیات را به‌صورت هم‌زمان از endpoint استاندارد SCIM Bulk ارسال می‌کند. HYBRID ایجاد را فوری و تغییر پروفایل را در صف پایدار با Bulk چندعملیاتی هر پنج دقیقه انجام می‌دهد.");
             properties.add(mode);
             Property fallback = property(StalwartSCIMProvisioningConnectorConstants.BULK_FALLBACK_TO_INDIVIDUAL,
                     "Fallback to Individual if Bulk endpoint is unavailable", "true", false, false, 17);
@@ -88,6 +88,11 @@ public class StalwartSCIMProvisioningConnectorFactory extends AbstractProvisioni
                     "Bulk maximum payload size (1024-1048576 bytes)", "900000", false, false, 19);
             bulkPayload.setDescription("حداکثر اندازه بدنه درخواست Bulk؛ مقدار پیش‌فرض با فاصله امن کمتر از محدودیت یک مگابایتی Stalwart تنظیم شده است.");
             properties.add(bulkPayload);
+
+            properties.add(property(StalwartSCIMProvisioningConnectorConstants.HYBRID_OUTBOX_JNDI_NAME,
+                    "HYBRID Outbox JNDI DataSource", "jdbc/WSO2CarbonDB", false, false, 20));
+            properties.add(property(StalwartSCIMProvisioningConnectorConstants.HYBRID_SCOPE_ID,
+                    "HYBRID Scope ID (tenantDomain|userStoreDomain)", "", false, false, 21));
 
             System.out.println(">>> STALWART-SCIM getConfigurationProperties() returned "
                     + properties.size() + " properties");
