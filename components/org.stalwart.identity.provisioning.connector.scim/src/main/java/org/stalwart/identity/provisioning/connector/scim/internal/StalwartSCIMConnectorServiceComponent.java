@@ -40,7 +40,7 @@ public class StalwartSCIMConnectorServiceComponent {
 
     private ServiceRegistration<?> factoryRegistration;
 
-    @Reference(service = RealmService.class)
+    @Reference(service = RealmService.class, unbind = "unsetRealmService")
     protected void setRealmService(RealmService realmService) {
         Wso2UserClaimSnapshot.bind(realmService);
         System.err.println(">>> STALWART-SCIM RealmService bound v2.0.5");
