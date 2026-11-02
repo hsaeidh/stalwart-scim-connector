@@ -629,22 +629,31 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
                 }
             }
         }
-        if ("HYBRID".equals(provisioningMode)) {
-            // POST_SET_USER_CLAIMS is the authoritative source for a complete
-            // WSO2 profile snapshot and change-origin metadata. The separate
-            // event handler writes that snapshot to the durable outbox. Do not
-            // issue a second PATCH from this callback.
-            log.debug("HYBRID profile update deferred to the durable WSO2 event outbox.");
-        } else {
-            JsonObject patch = userPatch(attrs, enableProfileUpdates);
-            if (patch.getAsJsonArray("Operations").size() > 0) {
+        JsonObject profilePatch = userPatch(attrs, enableProfileUpdates, entity.getEntityName());
+        if (profilePatch.getAsJsonArray("Operations").size() > 0) {
+            if ("HYBRID".equals(provisioningMode)) {
+                String externalId = targetUserIdentifier(attrs, entity.getEntityName());
+                externalId = stripUserStoreDomain(externalId);
+                String displayName = profilePatch.getAsJsonArray("Operations").get(0)
+                        .getAsJsonObject().get("value").getAsString();
+                if (StringUtils.isBlank(externalId)) {
+                    throw new IdentityProvisioningException(
+                            "HYBRID profile update requires the immutable WSO2 externalId.");
+                }
+                try {
+                    hybridProfileOutbox.enqueue(hybridScopeId, externalId, displayName,
+                            "CONNECTOR_PROFILE_CLAIM_SNAPSHOT", 3);
+                } catch (SQLException e) {
+                    throw new IdentityProvisioningException(
+                            "Unable to persist the HYBRID profile update in WSO2CarbonDB.", e);
+                }
+            } else {
                 String id = findUserId(attrs, entity.getEntityName());
                 if (id != null) {
-                    // Profile claims are authoritative deltas from WSO2. Avoid a
-                    // read-before-write GET; SCIM replace operations are idempotent.
-                    requestAt(profileUpdateBaseUrl(), "PATCH", "/Users/" + pathSegment(id), patch);
+                    requestAt(profileUpdateBaseUrl(), "PATCH", "/Users/" + pathSegment(id), profilePatch);
                 } else {
-                    throw new IdentityProvisioningException("Stalwart user was not found for update; stable externalId lookup failed.");
+                    throw new IdentityProvisioningException(
+                            "Stalwart user was not found for update; stable externalId lookup failed.");
                 }
             }
         }
@@ -781,30 +790,40 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
         return user;
     }
 
-    private JsonObject userPatch(Map<ClaimMapping, List<String>> attrs, boolean includeProfile)
+    private JsonObject userPatch(Map<ClaimMapping, List<String>> attrs, boolean includeProfile, String entityName)
             throws IdentityProvisioningException {
         JsonArray operations = new JsonArray();
 
-        // userName and externalId are identity keys, not mutable profile fields.
-        // Never PATCH either one: changing userName changes the primary SMTP address.
+        // userName and externalId are immutable identity keys after creation.
+        // A name-part delta is resolved against the authoritative current WSO2
+        // UserStore snapshot; no Event Handler or JVM property is involved.
         String given = mappedValue(attrs, givenNameClaimUri);
         String family = mappedValue(attrs, familyNameClaimUri);
         String display = mappedValue(attrs, displayNameClaimUri);
-        // OR trigger semantics: either name part is a profile-change signal.
-        // When a name part is present, it takes precedence over a possibly stale
-        // displayName in the same partial event. Both current name parts are
-        // required here; the WSO2 event observer is responsible for verifying
-        // whether the event provides the changed-claim set and complete snapshot.
         if (includeProfile && (StringUtils.isNotBlank(given) || StringUtils.isNotBlank(family))) {
-            if (StringUtils.isNotBlank(given) && StringUtils.isNotBlank(family)) {
-                addReplace(operations, "displayName", joinName(given, family));
-            } else {
+            String lookupName = entityName;
+            if (StringUtils.isNotBlank(userStoreDomainName) && StringUtils.isNotBlank(lookupName)
+                    && lookupName.indexOf('/') < 0) {
+                lookupName = userStoreDomainName.trim() + "/" + lookupName.trim();
+            }
+            try {
+                Map<String, String> snapshot = Wso2UserClaimSnapshot.read(lookupName,
+                        new String[]{givenNameClaimUri, familyNameClaimUri});
+                if (!snapshot.containsKey(givenNameClaimUri) || !snapshot.containsKey(familyNameClaimUri)) {
+                    throw new IdentityProvisioningException(
+                            "The current WSO2 UserStore snapshot did not include both FIRSTNAME and LASTNAME claims.");
+                }
+                String currentGiven = snapshot.get(givenNameClaimUri);
+                String currentFamily = snapshot.get(familyNameClaimUri);
+                String composed = joinName(currentGiven, currentFamily);
+                if (StringUtils.isNotBlank(composed)) addReplace(operations, "displayName", composed);
+            } catch (IdentityProvisioningException e) {
+                throw e;
+            } catch (Exception e) {
                 throw new IdentityProvisioningException(
-                        "FIRSTNAME or LASTNAME changed, but the complete current name snapshot is unavailable. "
-                                + "A stale displayName was not used; the profile update must be reconciled from WSO2.");
+                        "Unable to read the complete current FIRSTNAME/LASTNAME snapshot from WSO2 UserStore.", e);
             }
         } else if (includeProfile && StringUtils.isNotBlank(display)) {
-            // DISPLAYNAME-only changes use the explicit current displayName claim.
             addReplace(operations, "displayName", display.trim());
         }
 
