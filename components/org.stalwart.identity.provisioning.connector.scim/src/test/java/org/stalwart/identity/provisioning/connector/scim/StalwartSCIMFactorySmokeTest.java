@@ -1,6 +1,9 @@
 package org.stalwart.identity.provisioning.connector.scim;
 
 import org.wso2.carbon.identity.application.common.model.Property;
+import org.wso2.carbon.identity.provisioning.ProvisioningEntity;
+import org.wso2.carbon.identity.provisioning.ProvisioningEntityType;
+import org.wso2.carbon.identity.provisioning.ProvisioningOperation;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.sun.net.httpserver.HttpServer;
@@ -8,6 +11,7 @@ import java.lang.reflect.Method;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import java.util.HashMap;
 import java.util.List;
@@ -128,6 +132,7 @@ public final class StalwartSCIMFactorySmokeTest {
         }
 
         assertBulkTransportRequest();
+        assertStableEntityNameReconciliationWithoutEmailClaim();
 
         System.out.println("Connector type: " + factory.getConnectorType());
         System.out.println("Properties count: " + properties.size());
@@ -204,6 +209,88 @@ public final class StalwartSCIMFactorySmokeTest {
             }
         } catch (Exception e) {
             throw new IllegalStateException("SCIM Bulk transport smoke test failed.", e);
+        } finally {
+            if (server != null) server.stop(0);
+        }
+    }
+
+    private static void assertStableEntityNameReconciliationWithoutEmailClaim() {
+        HttpServer server = null;
+        try {
+            AtomicInteger getCount = new AtomicInteger();
+            AtomicInteger deleteCount = new AtomicInteger();
+            AtomicInteger postCount = new AtomicInteger();
+            server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+            server.createContext("/scim/v2/Users", exchange -> {
+                String path = exchange.getRequestURI().getPath();
+                if ("GET".equals(exchange.getRequestMethod()) && "/scim/v2/Users".equals(path)) {
+                    getCount.incrementAndGet();
+                    String query = exchange.getRequestURI().getRawQuery();
+                    if (query == null || !query.contains("externalId")) {
+                        exchange.sendResponseHeaders(400, -1);
+                        exchange.close();
+                        return;
+                    }
+                    JsonObject resource = new JsonObject();
+                    resource.addProperty("id", "existing-id");
+                    resource.addProperty("externalId", "1234567890");
+                    com.google.gson.JsonArray resources = new com.google.gson.JsonArray();
+                    resources.add(resource);
+                    JsonObject list = new JsonObject();
+                    list.addProperty("totalResults", 1);
+                    list.add("Resources", resources);
+                    byte[] bytes = list.toString().getBytes(StandardCharsets.UTF_8);
+                    exchange.getResponseHeaders().set("Content-Type", "application/scim+json");
+                    exchange.sendResponseHeaders(200, bytes.length);
+                    try (var output = exchange.getResponseBody()) {
+                        output.write(bytes);
+                    }
+                    return;
+                }
+                if ("DELETE".equals(exchange.getRequestMethod())
+                        && "/scim/v2/Users/existing-id".equals(path)) {
+                    deleteCount.incrementAndGet();
+                    exchange.sendResponseHeaders(204, -1);
+                    exchange.close();
+                    return;
+                }
+                if ("POST".equals(exchange.getRequestMethod())) {
+                    postCount.incrementAndGet();
+                }
+                exchange.sendResponseHeaders(404, -1);
+                exchange.close();
+            });
+            server.start();
+
+            String base = "http://127.0.0.1:" + server.getAddress().getPort() + "/scim/v2";
+            Property baseUrl = new Property();
+            baseUrl.setName(StalwartSCIMProvisioningConnectorConstants.BASE_URL);
+            baseUrl.setValue(base);
+            Property token = new Property();
+            token.setName(StalwartSCIMProvisioningConnectorConstants.BEARER_TOKEN);
+            token.setValue("smoke-test-token");
+            StalwartSCIMProvisioningConnector connector = new StalwartSCIMProvisioningConnector();
+            connector.init(new Property[]{baseUrl, token});
+
+            // A WSO2 retry may arrive as POST with no mapped claims. Under the
+            // default username -> externalId mapping, entityName must reconcile
+            // the existing account without demanding an email address.
+            ProvisioningEntity repeatedPost = new ProvisioningEntity(
+                    ProvisioningEntityType.USER, "1234567890", ProvisioningOperation.POST, Map.of());
+            connector.provision(repeatedPost);
+
+            // DELETE commonly omits claim attributes. It must resolve by the
+            // stable local username/externalId and must not require userName email.
+            ProvisioningEntity delete = new ProvisioningEntity(
+                    ProvisioningEntityType.USER, "1234567890", ProvisioningOperation.DELETE, Map.of());
+            connector.provision(delete);
+
+            if (getCount.get() != 2 || deleteCount.get() != 1 || postCount.get() != 0) {
+                throw new IllegalStateException("Stable entityName reconciliation failed: GET="
+                        + getCount.get() + ", DELETE=" + deleteCount.get() + ", POST=" + postCount.get());
+            }
+        } catch (Exception e) {
+            throw new IllegalStateException("Stable externalId reconciliation smoke test failed.", e);
         } finally {
             if (server != null) server.stop(0);
         }
