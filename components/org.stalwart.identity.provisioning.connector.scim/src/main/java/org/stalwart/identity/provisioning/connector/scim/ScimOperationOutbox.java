@@ -215,13 +215,13 @@ public final class ScimOperationOutbox {
                         + "ENDPOINT_URL VARCHAR(2048) NOT NULL,"
                         + "METHOD VARCHAR(8) NOT NULL,"
                         + "RESOURCE_PATH VARCHAR(4096) NOT NULL,"
-                        + "DATA_JSON " + largeText + ",
+                        + "DATA_JSON " + largeText + ","
                         + "STATUS VARCHAR(16) NOT NULL,"
                         + "ATTEMPTS INTEGER NOT NULL,"
                         + "NEXT_ATTEMPT_AT DECIMAL(19,0) NOT NULL,"
                         + "LEASE_OWNER VARCHAR(128),"
                         + "LEASE_UNTIL DECIMAL(19,0),"
-                        + "RESPONSE_JSON " + largeText + ",
+                        + "RESPONSE_JSON " + largeText + ","
                         + "LAST_ERROR VARCHAR(2000),"
                         + "CREATED_AT DECIMAL(19,0) NOT NULL,"
                         + "UPDATED_AT DECIMAL(19,0) NOT NULL)");
