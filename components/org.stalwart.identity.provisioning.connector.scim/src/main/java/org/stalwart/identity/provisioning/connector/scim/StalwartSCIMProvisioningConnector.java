@@ -244,7 +244,7 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
         // WSO2 can retry a failed provisioning event. Reuse an existing account so
         // a later group-membership failure does not cause a duplicate-user conflict.
         if (existingId == null) {
-            JsonObject user = userPayload(attrs, userName);
+            JsonObject user = userPayload(attrs, userName, externalId);
             // Email entitlement takes precedence over a mapped active claim. Fold it
             // into the create document instead of issuing a redundant follow-up PATCH.
             if (emailEntitled) {
@@ -309,7 +309,8 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
                 && newGroups.stream().anyMatch(this::isEmailMembershipGroup);
         if (emailMembershipAdded && findUserId(attrs, entity.getEntityName()) == null) {
             // Provision the account before processing any distribution-group deltas.
-            request("POST", "/Users", userPayload(attrs, targetUserName(attrs, entity.getEntityName())));
+            request("POST", "/Users", userPayload(attrs, targetUserName(attrs, entity.getEntityName()),
+                    targetUserIdentifier(attrs, entity.getEntityName())));
         }
         if (CollectionUtils.isNotEmpty(newGroups) || CollectionUtils.isNotEmpty(deletedGroups)) {
             if (newGroups != null) {
@@ -431,12 +432,17 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
 
     private JsonObject userPayload(Map<ClaimMapping, List<String>> attrs, String userName)
             throws IdentityProvisioningException {
+        return userPayload(attrs, userName, mappedValue(attrs, externalIdClaimUri));
+    }
+
+    private JsonObject userPayload(Map<ClaimMapping, List<String>> attrs, String userName, String stableExternalId)
+            throws IdentityProvisioningException {
         JsonObject user = new JsonObject();
         JsonArray schemas = new JsonArray();
         schemas.add(USER_SCHEMA);
         user.add("schemas", schemas);
         user.addProperty("userName", userName);
-        String externalId = mappedValue(attrs, externalIdClaimUri);
+        String externalId = stableExternalId;
         if (StringUtils.isBlank(externalId)) {
             throw new IdentityProvisioningException("A non-empty stable WSO2 externalId claim is required to create a Stalwart account.");
         }
