@@ -8,7 +8,7 @@
   <packaging>pom</packaging>
   <name>Stalwart SCIM Provisioning Connector</name>
   <description>Independent WSO2 Identity Server outbound provisioning connector for Stalwart SCIM.</description>
-  <modules><module>components/org.stalwart.identity.provisioning.connector.scim</module></modules>
+  <modules><module>components/org.stalwart.identity.provisioning.connector.scim</module><module>components/org.stalwart.identity.provisioning.event.handler</module></modules>
   <repositories><repository><id>wso2-public</id><name>WSO2 Public Maven Repository</name><url>https://maven.wso2.org/nexus/content/groups/wso2-public/</url></repository></repositories>
   <properties>
     <maven.compiler.source>21</maven.compiler.source><maven.compiler.target>21</maven.compiler.target>
