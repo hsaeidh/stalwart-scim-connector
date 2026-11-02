@@ -515,7 +515,7 @@ public final class StalwartSCIMFactorySmokeTest {
 
             Method flush = StalwartSCIMProvisioningConnector.class.getDeclaredMethod("flushScimOperationOutbox");
             flush.setAccessible(true);
-            flush.invoke(connector);
+            flush.invoke(connector, scope);
 
             JsonObject sent = JsonParser.parseString(payload.get()).getAsJsonObject();
             if (requestCount.get() != 1 || sent.getAsJsonArray("Operations").size() != 2) {
@@ -616,7 +616,7 @@ public final class StalwartSCIMFactorySmokeTest {
             setField(connector, "bulkMaxPayloadBytes", 900000);
             setField(connector, "bulkFallbackToIndividual", true);
 
-            Method flush = StalwartSCIMProvisioningConnector.class.getDeclaredMethod("flushHybridProfileOutbox");
+            Method flush = StalwartSCIMProvisioningConnector.class.getDeclaredMethod("flushHybridProfileOutbox", String.class);
             flush.setAccessible(true);
             flush.invoke(connector);
 
