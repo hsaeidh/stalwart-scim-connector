@@ -73,32 +73,32 @@ public class StalwartSCIMProvisioningConnectorFactory extends AbstractProvisioni
                     "WSO2 group that grants email access", "Email", false, false, 15));
             Property mode = property(StalwartSCIMProvisioningConnectorConstants.PROVISIONING_MODE,
                     "Provisioning Mode (INDIVIDUAL, BULK or HYBRID)", "INDIVIDUAL", false, false, 16);
-            mode.setDescription("INDIVIDUAL رفتار هم‌زمان مستقل است. BULK هر عملیات را به‌صورت هم‌زمان از endpoint استاندارد SCIM Bulk ارسال می‌کند. HYBRID ایجاد را فوری و تغییر پروفایل را در صف پایدار با Bulk چندعملیاتی هر پنج دقیقه انجام می‌دهد.");
+            mode.setDescription("INDIVIDUAL sends each SCIM mutation synchronously to its standard endpoint. BULK sends each mutation synchronously through the SCIM Bulk endpoint as a single-operation request. HYBRID creates users immediately with Individual requests and queues supported profile-name changes in a durable JDBC outbox for multi-operation Bulk PATCH delivery every five minutes. Primary email, email aliases, and WSO2 local username changes are never synchronized.");
             properties.add(mode);
             Property fallback = property(StalwartSCIMProvisioningConnectorConstants.BULK_FALLBACK_TO_INDIVIDUAL,
                     "Fallback to Individual if Bulk endpoint is unavailable", "true", false, false, 17);
             fallback.setType("boolean");
-            fallback.setDescription("اگر سرور صریحاً اعلام کند endpoint مربوط به Bulk وجود ندارد، کانکتور به درخواست مستقل برمی‌گردد؛ خطاهای مبهم باعث ارسال مجدد نمی‌شوند.");
+            fallback.setDescription("When the server definitively reports that the Bulk endpoint is unavailable (HTTP 404, 405, or 501), fall back to the corresponding Individual request. Do not use this fallback for ambiguous network outcomes or operation failures.");
             properties.add(fallback);
             Property bulkTimeout = property(StalwartSCIMProvisioningConnectorConstants.BULK_REQUEST_TIMEOUT_MS,
                     "Bulk request timeout (1000-120000 ms)", "30000", false, false, 18);
-            bulkTimeout.setDescription("مهلت انتظار پاسخ سرور برای هر درخواست Bulk به میلی‌ثانیه.");
+            bulkTimeout.setDescription("Maximum time to wait for the Stalwart server response to each Bulk request, in milliseconds.");
             properties.add(bulkTimeout);
             Property bulkPayload = property(StalwartSCIMProvisioningConnectorConstants.BULK_MAX_PAYLOAD_BYTES,
                     "Bulk maximum payload size (1024-1048576 bytes)", "900000", false, false, 19);
-            bulkPayload.setDescription("حداکثر اندازه بدنه درخواست Bulk؛ مقدار پیش‌فرض با فاصله امن کمتر از محدودیت یک مگابایتی Stalwart تنظیم شده است.");
+            bulkPayload.setDescription("Maximum encoded size of a Bulk request body in bytes. The default leaves a safety margin below Stalwart's 1 MiB request limit.");
             properties.add(bulkPayload);
 
             Property outboxJndi = property(StalwartSCIMProvisioningConnectorConstants.HYBRID_OUTBOX_JNDI_NAME,
                     "HYBRID Outbox JNDI DataSource", "jdbc/WSO2CarbonDB", false, false, 20);
-            outboxJndi.setDescription("نام JNDI یک DataSource مشترک و پایدار؛ در حالت HYBRID باید با JVM property "
-                    + "stalwart.scim.hybrid.outbox.jndi یکسان باشد. پیش‌فرض jdbc/WSO2CarbonDB است.");
+            outboxJndi.setDescription("JNDI name of the durable shared JDBC DataSource used by the HYBRID profile outbox. It must match the JVM property "
+                    + "stalwart.scim.hybrid.outbox.jndi. The default is jdbc/WSO2CarbonDB. All WSO2 nodes must use the same database.");
             properties.add(outboxJndi);
             Property hybridScope = property(StalwartSCIMProvisioningConnectorConstants.HYBRID_SCOPE_ID,
                     "HYBRID Scope ID (targetId|organization|tenantDomain|userStoreDomain)", "", false, false, 21);
-            hybridScope.setDescription("شناسه جداسازی صف؛ targetId|tenantDomain|userStoreDomain یا "
-                    + "targetId|organizationId|tenantDomain|userStoreDomain. targetId باید با JVM property "
-                    + "stalwart.scim.hybrid.target-id یکسان و برای هر Stalwart endpoint یکتا باشد.");
+            hybridScope.setDescription("Isolation key for the durable profile outbox. Use targetId|tenantDomain|userStoreDomain, or "
+                    + "targetId|organizationId|tenantDomain|userStoreDomain when organization context is available. targetId must match the JVM property "
+                    + "stalwart.scim.hybrid.target-id and must be unique for each Stalwart SCIM endpoint.");
             properties.add(hybridScope);
 
             System.out.println(">>> STALWART-SCIM getConfigurationProperties() returned "
@@ -121,7 +121,7 @@ public class StalwartSCIMProvisioningConnectorFactory extends AbstractProvisioni
         property.setConfidential(confidential);
         property.setDefaultValue(defaultValue);
         property.setDisplayOrder(order);
-        property.setDescription("Configure a WSO2 local claim URI or Stalwart SCIM connection value.");
+        property.setDescription("Configure the Stalwart SCIM connection or the WSO2 local claim URI used as the source for this attribute.");
         return property;
     }
 }
