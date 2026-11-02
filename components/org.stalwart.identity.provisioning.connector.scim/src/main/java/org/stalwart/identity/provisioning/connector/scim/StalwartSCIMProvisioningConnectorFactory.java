@@ -73,12 +73,12 @@ public class StalwartSCIMProvisioningConnectorFactory extends AbstractProvisioni
                     "WSO2 group that grants email access", "Email", false, false, 15));
             Property mode = property(StalwartSCIMProvisioningConnectorConstants.PROVISIONING_MODE,
                     "Provisioning Mode (INDIVIDUAL, BULK or HYBRID)", "INDIVIDUAL", false, false, 16);
-            mode.setDescription("INDIVIDUAL sends each SCIM mutation synchronously to its standard endpoint. BULK sends each mutation synchronously through the SCIM Bulk endpoint as a single-operation request. BULK first commits every mutation to the durable WSO2 Carbon JDBC outbox, then delivers queued operations in multi-operation SCIM Bulk requests. Pending operations survive WSO2 and host restarts and are retried automatically. HYBRID creates users immediately and queues supported profile-name changes for multi-operation Bulk PATCH delivery every five minutes. Primary email, email aliases, and WSO2 local username changes are never synchronized.");
+            mode.setDescription("INDIVIDUAL sends each SCIM mutation synchronously to its standard endpoint. BULK first commits every mutation to the built-in WSO2 Carbon JDBC outbox, then delivers queued operations in multi-operation SCIM Bulk requests. Pending operations survive WSO2 and host restarts and are retried automatically. HYBRID creates users immediately, sends non-profile changes individually, and queues supported profile-name changes for multi-operation Bulk PATCH delivery every five minutes. Primary email, email aliases, and WSO2 local username changes are never synchronized.");
             properties.add(mode);
             Property fallback = property(StalwartSCIMProvisioningConnectorConstants.BULK_FALLBACK_TO_INDIVIDUAL,
                     "Fallback to Individual if Bulk endpoint is unavailable", "true", false, false, 17);
             fallback.setType("boolean");
-            fallback.setDescription("When the server definitively reports that the Bulk endpoint is unavailable (HTTP 404, 405, or 501), fall back to the corresponding Individual request. Do not use this fallback for ambiguous network outcomes or operation failures.");
+            fallback.setDescription("When Stalwart definitively reports that the Bulk endpoint is unavailable (HTTP 404, 405, or 501), deliver the already-persisted operation through its Individual endpoint. Ambiguous network outcomes are never replayed as Individual requests.");
             properties.add(fallback);
             Property bulkTimeout = property(StalwartSCIMProvisioningConnectorConstants.BULK_REQUEST_TIMEOUT_MS,
                     "Bulk request timeout (1000-120000 ms)", "30000", false, false, 18);
