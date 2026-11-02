@@ -59,7 +59,7 @@ jobs:
           imports = attributes.get("Import-Package", "")
           service_component = attributes.get("Service-Component", "")
           require_capability = attributes.get("Require-Capability", "")
-          assert version == "2.0.3-SNAPSHOT", f"Unexpected Bundle-Version: {version!r}"
+          assert version == "2.0.3.SNAPSHOT", f"Unexpected Bundle-Version: {version!r}"
           assert attributes.get("Bundle-SymbolicName", "").split(";")[0] == (
               "org.stalwart.identity.provisioning.connector.scim"
           ), "Unexpected Bundle-SymbolicName"
@@ -206,7 +206,7 @@ jobs:
           print("Verified separate WSO2 profile event observer bundle and DS descriptor.")
           print("Verified immutable userName/externalId and disabled alias synchronization.")
           PY
-      - name: Upload connector JAR
+      - name: Upload connector and event observer JARs
         uses: actions/upload-artifact@v6
         with:
           name: stalwart-scim-connector-2.0.3-SNAPSHOT
