@@ -89,10 +89,17 @@ public class StalwartSCIMProvisioningConnectorFactory extends AbstractProvisioni
             bulkPayload.setDescription("حداکثر اندازه بدنه درخواست Bulk؛ مقدار پیش‌فرض با فاصله امن کمتر از محدودیت یک مگابایتی Stalwart تنظیم شده است.");
             properties.add(bulkPayload);
 
-            properties.add(property(StalwartSCIMProvisioningConnectorConstants.HYBRID_OUTBOX_JNDI_NAME,
-                    "HYBRID Outbox JNDI DataSource", "jdbc/WSO2CarbonDB", false, false, 20));
-            properties.add(property(StalwartSCIMProvisioningConnectorConstants.HYBRID_SCOPE_ID,
-                    "HYBRID Scope ID (tenantDomain|userStoreDomain)", "", false, false, 21));
+            Property outboxJndi = property(StalwartSCIMProvisioningConnectorConstants.HYBRID_OUTBOX_JNDI_NAME,
+                    "HYBRID Outbox JNDI DataSource", "jdbc/WSO2CarbonDB", false, false, 20);
+            outboxJndi.setDescription("نام JNDI یک DataSource مشترک و پایدار؛ در حالت HYBRID باید با JVM property "
+                    + "stalwart.scim.hybrid.outbox.jndi یکسان باشد. پیش‌فرض jdbc/WSO2CarbonDB است.");
+            properties.add(outboxJndi);
+            Property hybridScope = property(StalwartSCIMProvisioningConnectorConstants.HYBRID_SCOPE_ID,
+                    "HYBRID Scope ID (organization|tenantDomain|userStoreDomain)", "", false, false, 21);
+            hybridScope.setDescription("شناسه جداسازی صف؛ برای حالت عادی tenantDomain|userStoreDomain و برای "
+                    + "سازمان‌هایی که event آن‌ها organization ID دارد، organizationId|tenantDomain|userStoreDomain. "
+                    + "باید دقیقاً با context رویداد WSO2 منطبق باشد.");
+            properties.add(hybridScope);
 
             System.out.println(">>> STALWART-SCIM getConfigurationProperties() returned "
                     + properties.size() + " properties");
