@@ -5,8 +5,8 @@
 package org.stalwart.identity.provisioning.connector.scim;
 
 import org.wso2.carbon.context.PrivilegedCarbonContext;
-import org.wso2.carbon.user.core.UserRealm;
-import org.wso2.carbon.user.core.UserStoreManager;
+import org.wso2.carbon.user.api.UserRealm;
+import org.wso2.carbon.user.api.UserStoreManager;
 import org.wso2.carbon.user.core.service.RealmService;
 
 import java.util.LinkedHashMap;
