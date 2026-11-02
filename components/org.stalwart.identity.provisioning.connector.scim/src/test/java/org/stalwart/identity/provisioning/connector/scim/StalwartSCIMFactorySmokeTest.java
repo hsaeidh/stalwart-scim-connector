@@ -144,11 +144,13 @@ public final class StalwartSCIMFactorySmokeTest {
         assertUsernameCollisionReconcilesOnlySameExternalId();
         assertDurableOutboxCoalescingAndLease();
         assertHybridSchedulerSendsMultiOperationBulkPatch();
+        assertIdentityAndEmailOnlyUpdatesAreIgnored();
+        assertConnectorDescriptionsAreEnglish(properties);
 
         System.out.println("Connector type: " + factory.getConnectorType());
         System.out.println("Properties count: " + properties.size());
         System.out.println("Required claim mapping defaults: emailaddress -> userName, username -> externalId");
-        System.out.println("SMOKE TEST PASSED v2.0.3");
+        System.out.println("SMOKE TEST PASSED v2.0.4");
     }
 
     private static void assertBulkTransportRequest() {
@@ -536,6 +538,56 @@ public final class StalwartSCIMFactorySmokeTest {
             throw new IllegalStateException("HYBRID multi-operation Bulk scheduler smoke test failed.", e);
         } finally {
             if (server != null) server.stop(0);
+        }
+    }
+
+    /**
+     * Primary email, aliases and WSO2 local username are intentionally not
+     * synchronized. These update-only events must return without any SCIM call.
+     */
+    private static void assertIdentityAndEmailOnlyUpdatesAreIgnored() {
+        try {
+            StalwartSCIMProvisioningConnector connector = new StalwartSCIMProvisioningConnector();
+            setField(connector, "baseUrl", "http://127.0.0.1:1/scim/v2");
+            setField(connector, "bearerToken", "smoke-test-token");
+            setField(connector, "provisioningMode", "INDIVIDUAL");
+            setField(connector, "enableProfileUpdates", true);
+            setField(connector, "activeClaimUri", "");
+
+            ClaimMapping primaryEmail = ClaimMapping.build(
+                    "http://wso2.org/claims/emailaddress", null, null, false);
+            ClaimMapping localUsername = ClaimMapping.build(
+                    "http://wso2.org/claims/username", null, null, false);
+            ClaimMapping aliases = ClaimMapping.build(
+                    "http://wso2.org/claims/emailaliases", null, null, false);
+            ClaimMapping emails = ClaimMapping.build(
+                    "http://wso2.org/claims/emails", null, null, false);
+
+            List<Map<ClaimMapping, List<String>>> ignoredUpdates = List.of(
+                    Map.of(primaryEmail, List.of("new-primary@example.com")),
+                    Map.of(aliases, List.of("alias-added@example.com")),
+                    Map.of(aliases, List.of()),
+                    Map.of(emails, List.of("alias-removed@example.com")),
+                    Map.of(localUsername, List.of("new-local-username"))
+            );
+            for (Map<ClaimMapping, List<String>> attributes : ignoredUpdates) {
+                ProvisioningEntity update = new ProvisioningEntity(
+                        ProvisioningEntityType.USER, "1234567890", ProvisioningOperation.PATCH, attributes);
+                connector.provision(update);
+            }
+        } catch (Exception e) {
+            throw new IllegalStateException(
+                    "Primary email, alias, or WSO2 username-only update attempted a Stalwart operation.", e);
+        }
+    }
+
+    private static void assertConnectorDescriptionsAreEnglish(List<Property> properties) {
+        for (Property property : properties) {
+            String description = property.getDescription();
+            if (description != null && description.matches("(?s).*[^\\x00-\\x7F].*")) {
+                throw new IllegalStateException(
+                        "Connector UI description must be English/ASCII: " + property.getName());
+            }
         }
     }
 
