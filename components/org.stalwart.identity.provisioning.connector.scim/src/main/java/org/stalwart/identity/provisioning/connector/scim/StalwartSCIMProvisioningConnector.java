@@ -66,6 +66,8 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
     private static final AtomicInteger CACHE_INSERTIONS = new AtomicInteger();
     private static final ConcurrentMap<String, StalwartSCIMProvisioningConnector> HYBRID_WORKERS =
             new ConcurrentHashMap<>();
+    private static final ConcurrentMap<String, StalwartSCIMProvisioningConnector> BULK_WORKERS =
+            new ConcurrentHashMap<>();
     private static final AtomicBoolean HYBRID_SCHEDULER_STARTED = new AtomicBoolean(false);
     private static volatile ScheduledExecutorService hybridScheduler;
     private static final class CacheEntry {
@@ -101,6 +103,8 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
     private String hybridOutboxJndiName = HybridProfileOutbox.DEFAULT_JNDI_NAME;
     private String hybridScopeId;
     private HybridProfileOutbox hybridProfileOutbox;
+    private ScimOperationOutbox scimOperationOutbox;
+    private String scimOperationScope;
     private final ConcurrentMap<String, Boolean> bulkUnsupportedEndpoints = new ConcurrentHashMap<>();
 
     @Override
@@ -156,41 +160,26 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
                 && !"HYBRID".equals(provisioningMode)) {
             throw new IdentityProvisioningException("provisioning-mode must be INDIVIDUAL, BULK or HYBRID.");
         }
-        if ("HYBRID".equals(provisioningMode)) {
-            if (!enableProfileUpdates) {
-                throw new IdentityProvisioningException("HYBRID mode requires enable-profile-updates=true.");
-            }
-            if (StringUtils.isBlank(hybridScopeId)
-                    || !hybridScopeId.trim().matches("^[^|]+\\|[^|]+\\|[^|]+(?:\\|[^|]+)?$")) {
+        if ("HYBRID".equals(provisioningMode) && !enableProfileUpdates) {
+            throw new IdentityProvisioningException("HYBRID mode requires enable-profile-updates=true.");
+        }
+        if ("HYBRID".equals(provisioningMode) || "BULK".equals(provisioningMode)) {
+            try {
+                hybridScopeId = buildOutboxScope(baseUrl, userStoreDomainName, bearerToken);
+                hybridProfileOutbox = HybridProfileOutbox.lookup(hybridOutboxJndiName);
+                if ("BULK".equals(provisioningMode)) {
+                    scimOperationOutbox = ScimOperationOutbox.lookup(hybridOutboxJndiName);
+                    scimOperationScope = buildOutboxScope(baseUrl, userStoreDomainName, bearerToken);
+                    registerBulkWorker();
+                }
+                if ("HYBRID".equals(provisioningMode)) {
+                    registerHybridWorker();
+                }
+            } catch (Exception e) {
                 throw new IdentityProvisioningException(
-                        "hybrid-scope-id is required in HYBRID mode and must be tenantDomain|userStoreDomain.");
+                        "Unable to initialize the durable Stalwart SCIM outbox using WSO2 Carbon DataSource "
+                                + hybridOutboxJndiName + ".", e);
             }
-            hybridScopeId = hybridScopeId.trim();
-            String targetId = System.getProperty("stalwart.scim.hybrid.target-id", "default");
-            if (!hybridScopeId.startsWith(targetId + "|")) {
-                throw new IdentityProvisioningException(
-                        "hybrid-scope-id must start with JVM property -Dstalwart.scim.hybrid.target-id.");
-            }
-            if (!Boolean.parseBoolean(System.getProperty("stalwart.scim.hybrid.enabled", "false"))) {
-                throw new IdentityProvisioningException(
-                        "HYBRID mode requires JVM system property -Dstalwart.scim.hybrid.enabled=true "
-                                + "so POST_SET_USER_CLAIMS can enqueue complete WSO2 snapshots.");
-            }
-            String eventHandlerJndi = System.getProperty("stalwart.scim.hybrid.outbox.jndi",
-                    HybridProfileOutbox.DEFAULT_JNDI_NAME);
-            if (StringUtils.isBlank(hybridOutboxJndiName)) hybridOutboxJndiName = eventHandlerJndi;
-            if (!hybridOutboxJndiName.equals(eventHandlerJndi)) {
-                throw new IdentityProvisioningException(
-                        "hybrid-outbox-jndi-name must match JVM property -Dstalwart.scim.hybrid.outbox.jndi.");
-            }
-            validateHybridClaimUri("stalwart.scim.hybrid.external-id-claim-uri",
-                    externalIdClaimUri, "http://wso2.org/claims/username");
-            validateHybridClaimUri("stalwart.scim.hybrid.given-name-claim-uri",
-                    givenNameClaimUri, "http://wso2.org/claims/givenname");
-            validateHybridClaimUri("stalwart.scim.hybrid.family-name-claim-uri",
-                    familyNameClaimUri, "http://wso2.org/claims/lastname");
-            validateHybridClaimUri("stalwart.scim.hybrid.display-name-claim-uri",
-                    displayNameClaimUri, "http://wso2.org/claims/displayname");
         }
         if (bulkRequestTimeoutMs < 1000 || bulkRequestTimeoutMs > 120000) {
             throw new IdentityProvisioningException("bulk-request-timeout-ms must be between 1000 and 120000.");
@@ -249,14 +238,9 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
         }
     }
 
-    private void validateHybridClaimUri(String systemProperty, String connectorClaimUri, String defaultUri)
-            throws IdentityProvisioningException {
-        String eventClaimUri = System.getProperty(systemProperty, defaultUri);
-        if (!eventClaimUri.equals(connectorClaimUri)) {
-            throw new IdentityProvisioningException(
-                    "HYBRID event-handler claim URI mismatch for JVM property -" + systemProperty
-                            + "; it must match the outbound connection claim mapping.");
-        }
+    private String buildOutboxScope(String endpoint, String userStoreDomain, String token) {
+        String tokenFingerprint = Integer.toHexString(StringUtils.defaultString(token).hashCode());
+        return endpoint + "|" + StringUtils.defaultIfBlank(userStoreDomain, "PRIMARY") + "|" + tokenFingerprint;
     }
 
     private void registerHybridWorker() {
