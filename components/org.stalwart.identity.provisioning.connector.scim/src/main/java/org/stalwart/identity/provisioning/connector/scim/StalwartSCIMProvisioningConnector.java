@@ -239,11 +239,14 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
                 user.addProperty("active", true);
             }
             request("POST", "/Users", user);
+            // Initial memberships are applied once, after successful account creation.
+            updateUserGroupMemberships(entity);
         } else {
-            log.info("Stalwart user already exists; reconciling attributes and memberships: " + userName);
+            log.info("Stalwart user already exists; reconciling attributes and membership deltas.");
+            // Reconciliation must not require the current email claim. The stable
+            // externalId resolved the existing Stalwart account above.
             updateUser(entity, emailEntitled);
         }
-        updateUserGroupMemberships(entity);
     }
 
     private void updateUser(ProvisioningEntity entity) throws IdentityProvisioningException {
@@ -823,12 +826,27 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
     private boolean postResourceNowExists(String path, JsonObject body) throws IdentityProvisioningException {
         if (body == null || !path.matches("^/(Users|Groups)$")) return false;
         if ("/Users".equals(path)) {
-            // A username collision is not sufficient: the existing account must
-            // carry the same stable externalId before a retried POST is accepted.
+            // A username collision is not proof that this is the same WSO2 user.
+            // First reconcile by immutable externalId; only accept a username
+            // collision after reading the existing resource and matching externalId.
             if (!body.has("externalId") || StringUtils.isBlank(body.get("externalId").getAsString())) {
                 return false;
             }
-            return findResourceId("Users", "externalId", body.get("externalId").getAsString()) != null;
+            String expectedExternalId = body.get("externalId").getAsString();
+            String byExternalId = findResourceId("Users", "externalId", expectedExternalId);
+            if (byExternalId != null) return true;
+            if (!body.has("userName") || StringUtils.isBlank(body.get("userName").getAsString())) {
+                return false;
+            }
+            String byUserName = findResourceId("Users", "userName", body.get("userName").getAsString());
+            if (byUserName == null) return false;
+            JsonObject existing = request("GET", "/Users/" + pathSegment(byUserName), null);
+            String actualExternalId = existing.has("externalId") && !existing.get("externalId").isJsonNull()
+                    ? existing.get("externalId").getAsString() : null;
+            if (expectedExternalId.equals(actualExternalId)) return true;
+            throw new IdentityProvisioningException(
+                    "Stalwart userName already exists but belongs to a different externalId. "
+                            + "The connector will not adopt or overwrite that account.");
         }
         if (!body.has("displayName")) return false;
         return findResourceId("Groups", "displayName", body.get("displayName").getAsString()) != null;
