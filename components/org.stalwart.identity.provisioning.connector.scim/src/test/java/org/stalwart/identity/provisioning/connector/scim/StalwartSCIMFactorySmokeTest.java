@@ -40,8 +40,8 @@ public final class StalwartSCIMFactorySmokeTest {
         }
 
         List<Property> properties = factory.getConfigurationProperties();
-        if (properties == null || properties.size() != 21) {
-            throw new IllegalStateException("Expected 21 configuration properties, got: "
+        if (properties == null || properties.size() != 19) {
+            throw new IllegalStateException("Expected 19 configuration properties, got: "
                     + (properties == null ? "null" : properties.size()));
         }
 
@@ -74,9 +74,7 @@ public final class StalwartSCIMFactorySmokeTest {
                 StalwartSCIMProvisioningConnectorConstants.PROVISIONING_MODE,
                 StalwartSCIMProvisioningConnectorConstants.BULK_FALLBACK_TO_INDIVIDUAL,
                 StalwartSCIMProvisioningConnectorConstants.BULK_REQUEST_TIMEOUT_MS,
-                StalwartSCIMProvisioningConnectorConstants.BULK_MAX_PAYLOAD_BYTES,
-                StalwartSCIMProvisioningConnectorConstants.HYBRID_OUTBOX_JNDI_NAME,
-                StalwartSCIMProvisioningConnectorConstants.HYBRID_SCOPE_ID
+                StalwartSCIMProvisioningConnectorConstants.BULK_MAX_PAYLOAD_BYTES
         };
         for (String name : expectedNames) {
             if (!byName.containsKey(name)) {
@@ -106,25 +104,15 @@ public final class StalwartSCIMFactorySmokeTest {
         assertDefault(byName, StalwartSCIMProvisioningConnectorConstants.BULK_FALLBACK_TO_INDIVIDUAL, "true");
         assertDefault(byName, StalwartSCIMProvisioningConnectorConstants.BULK_REQUEST_TIMEOUT_MS, "30000");
         assertDefault(byName, StalwartSCIMProvisioningConnectorConstants.BULK_MAX_PAYLOAD_BYTES, "900000");
-        assertDefault(byName, StalwartSCIMProvisioningConnectorConstants.HYBRID_OUTBOX_JNDI_NAME,
-                "jdbc/WSO2CarbonDB");
-        assertDefault(byName, StalwartSCIMProvisioningConnectorConstants.HYBRID_SCOPE_ID, "");
+        // Outbox settings are intentionally absent from the UI: the connector
+        // uses WSO2's standard jdbc/WSO2CarbonDB datasource automatically.
 
-        // Verify the new mode can be initialized without changing the OSGi factory contract.
         Property baseUrl = new Property();
         baseUrl.setName(StalwartSCIMProvisioningConnectorConstants.BASE_URL);
         baseUrl.setValue("https://mail.example.com/scim/v2");
         Property token = new Property();
         token.setName(StalwartSCIMProvisioningConnectorConstants.BEARER_TOKEN);
         token.setValue("smoke-test-token");
-        Property mode = new Property();
-        mode.setName(StalwartSCIMProvisioningConnectorConstants.PROVISIONING_MODE);
-        mode.setValue("BULK");
-        try {
-            new StalwartSCIMProvisioningConnector().init(new Property[]{baseUrl, token, mode});
-        } catch (org.wso2.carbon.identity.provisioning.IdentityProvisioningException e) {
-            throw new IllegalStateException("Valid BULK configuration was rejected.", e);
-        }
 
         Property invalidMode = new Property();
         invalidMode.setName(StalwartSCIMProvisioningConnectorConstants.PROVISIONING_MODE);
@@ -143,6 +131,8 @@ public final class StalwartSCIMFactorySmokeTest {
         assertStableEntityNameReconciliationWithoutEmailClaim();
         assertUsernameCollisionReconcilesOnlySameExternalId();
         assertDurableOutboxCoalescingAndLease();
+        assertDurableBulkOutboxSurvivesReopen();
+        assertDurableBulkOutboxBatchesMultipleOperations();
         assertHybridSchedulerSendsMultiOperationBulkPatch();
         assertIdentityAndEmailOnlyUpdatesAreIgnored();
         assertConnectorDescriptionsAreEnglish(properties);
@@ -150,7 +140,7 @@ public final class StalwartSCIMFactorySmokeTest {
         System.out.println("Connector type: " + factory.getConnectorType());
         System.out.println("Properties count: " + properties.size());
         System.out.println("Required claim mapping defaults: emailaddress -> userName, username -> externalId");
-        System.out.println("SMOKE TEST PASSED v2.0.4");
+        System.out.println("SMOKE TEST PASSED v2.0.5");
     }
 
     private static void assertBulkTransportRequest() {
@@ -194,7 +184,16 @@ public final class StalwartSCIMFactorySmokeTest {
             mode.setName(StalwartSCIMProvisioningConnectorConstants.PROVISIONING_MODE);
             mode.setValue("BULK");
             StalwartSCIMProvisioningConnector connector = new StalwartSCIMProvisioningConnector();
-            connector.init(new Property[]{baseUrl, token, mode});
+            JdbcDataSource dataSource = new JdbcDataSource();
+            dataSource.setURL("jdbc:h2:mem:stalwart_bulk_transport;DB_CLOSE_DELAY=-1");
+            setField(connector, "baseUrl", base);
+            setField(connector, "bearerToken", "smoke-test-token");
+            setField(connector, "provisioningMode", "BULK");
+            setField(connector, "bulkRequestTimeoutMs", 30000);
+            setField(connector, "bulkMaxPayloadBytes", 900000);
+            setField(connector, "bulkFallbackToIndividual", true);
+            setField(connector, "scimOperationOutbox", new ScimOperationOutbox(dataSource));
+            setField(connector, "scimOperationScope", "smoke-scope");
 
             JsonObject user = new JsonObject();
             user.addProperty("userName", "bulk-smoke@example.com");
