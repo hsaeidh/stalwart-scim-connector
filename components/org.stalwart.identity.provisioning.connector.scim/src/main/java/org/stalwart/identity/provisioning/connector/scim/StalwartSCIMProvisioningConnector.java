@@ -1002,8 +1002,7 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
 
     private JsonObject requestAt(String endpointBaseUrl, String method, String path, JsonObject body)
             throws IdentityProvisioningException {
-        if ("BULK".equals(provisioningMode) && !bulkUnsupportedEndpoints.containsKey(endpointBaseUrl)
-                && !"GET".equalsIgnoreCase(method)) {
+        if ("BULK".equals(provisioningMode) && !"GET".equalsIgnoreCase(method)) {
             return requestBulkAt(endpointBaseUrl, method, path, body);
         }
         return requestAtIndividual(endpointBaseUrl, method, path, body);
@@ -1086,6 +1085,10 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
     }
 
     private void sendDurableBulkBatch(String endpoint, List<ScimOperationOutbox.Entry> entries) {
+        if (bulkUnsupportedEndpoints.containsKey(endpoint)) {
+            sendDurableIndividualFallback(endpoint, entries);
+            return;
+        }
         JsonArray operations = new JsonArray();
         List<JsonObject> bodies = new ArrayList<>();
         try {
@@ -1116,16 +1119,13 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
         envelope.add("Operations", operations);
         String payload = envelope.toString();
         if (payload.getBytes(StandardCharsets.UTF_8).length > bulkMaxPayloadBytes) {
-            // A single oversized operation cannot be fixed by retrying a smaller batch.
             if (entries.size() == 1) {
                 markBulkDead(entries.get(0), "A single durable Bulk operation exceeds bulk-max-payload-bytes.");
                 return;
             }
-            // Release this batch for later smaller chunks; claimBatch's limit is
-            // reduced on the next pass by splitting into deterministic halves.
-            for (ScimOperationOutbox.Entry entry : entries) {
-                markBulkRetry(entry, "Bulk batch exceeded configured payload size; retrying in a smaller batch.");
-            }
+            int middle = entries.size() / 2;
+            sendDurableBulkBatch(endpoint, entries.subList(0, middle));
+            sendDurableBulkBatch(endpoint, entries.subList(middle, entries.size()));
             return;
         }
 
@@ -1143,15 +1143,7 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
             if ((httpStatus == 404 || httpStatus == 405 || httpStatus == 501) && bulkFallbackToIndividual) {
                 bulkUnsupportedEndpoints.put(endpoint, Boolean.TRUE);
                 log.warn("SCIM Bulk endpoint unavailable; delivering durable queued operations individually.");
-                for (int i = 0; i < entries.size(); i++) {
-                    ScimOperationOutbox.Entry entry = entries.get(i);
-                    try {
-                        JsonObject result = requestAtIndividual(endpoint, entry.method(), entry.path(), bodies.get(i));
-                        markBulkSent(entry, result);
-                    } catch (Exception e) {
-                        markBulkRetry(entry, "Individual fallback failed: " + e);
-                    }
-                }
+                sendDurableIndividualFallback(endpoint, entries, bodies);
                 return;
             }
             if (httpStatus < 200 || httpStatus >= 300) {
@@ -1183,11 +1175,18 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
                     markBulkSent(entry, resource);
                 } else if (status == 404 && "DELETE".equalsIgnoreCase(entry.method())) {
                     markBulkSent(entry, new JsonObject());
-                } else if (status == 409 && "POST".equalsIgnoreCase(entry.method())
-                        && reconcileQueuedPost(entry, bodies.get(i))) {
-                    // A prior attempt may have committed the create before its
-                    // response was lost. Reconcile only by immutable externalId.
-                    markBulkSent(entry, resolveCreatedResource(entry, bodies.get(i)));
+                } else if (status == 409 && "POST".equalsIgnoreCase(entry.method())) {
+                    try {
+                        if (reconcileQueuedPost(entry, bodies.get(i))) {
+                            // A prior attempt may have committed the create before its
+                            // response was lost. Reconcile only by immutable externalId.
+                            markBulkSent(entry, resolveCreatedResource(entry, bodies.get(i)));
+                        } else {
+                            markBulkDead(entry, "Stalwart rejected the queued POST with HTTP 409 and no matching resource was found.");
+                        }
+                    } catch (IdentityProvisioningException e) {
+                        markBulkDead(entry, "Stalwart userName conflict does not match the immutable externalId: " + e);
+                    }
                 } else if (status >= 400 && status < 500 && status != 408 && status != 429) {
                     markBulkDead(entry, "Stalwart Bulk operation failed with HTTP " + status + ": "
                             + abbreviate(operationResult.toString()));
@@ -1221,6 +1220,19 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
         } catch (RuntimeException e) {
             for (ScimOperationOutbox.Entry entry : entries) {
                 markBulkRetry(entry, "Invalid Bulk response; durable retry scheduled: " + e);
+            }
+        }
+    }
+
+    private void sendDurableIndividualFallback(String endpoint, List<ScimOperationOutbox.Entry> entries) {
+        for (ScimOperationOutbox.Entry entry : entries) {
+            try {
+                JsonObject body = StringUtils.isBlank(entry.dataJson()) ? null
+                        : JsonParser.parseString(entry.dataJson()).getAsJsonObject();
+                JsonObject result = requestAtIndividual(endpoint, entry.method(), entry.path(), body);
+                markBulkSent(entry, result);
+            } catch (Exception e) {
+                markBulkRetry(entry, "Individual fallback failed: " + e);
             }
         }
     }
