@@ -5,6 +5,7 @@
 package org.stalwart.identity.provisioning.connector.scim;
 
 import javax.naming.InitialContext;
+import javax.naming.NamingException;
 import javax.sql.DataSource;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -34,9 +35,15 @@ public final class HybridProfileOutbox {
 
     public static HybridProfileOutbox lookup(String jndiName) throws Exception {
         String name = jndiName == null || jndiName.isBlank() ? DEFAULT_JNDI_NAME : jndiName.trim();
-        Object value = new InitialContext().lookup(name);
-        if (!(value instanceof DataSource dataSource)) {
-            throw new IllegalStateException("JNDI resource " + name + " is not a JDBC DataSource.");
+        DataSource dataSource;
+        try (InitialContext context = new InitialContext()) {
+            Object value = context.lookup(name);
+            if (!(value instanceof DataSource)) {
+                throw new IllegalStateException("JNDI resource " + name + " is not a JDBC DataSource.");
+            }
+            dataSource = (DataSource) value;
+        } catch (NamingException e) {
+            throw new IllegalStateException("Unable to resolve HYBRID outbox JNDI DataSource " + name + ".", e);
         }
         return new HybridProfileOutbox(dataSource);
     }
