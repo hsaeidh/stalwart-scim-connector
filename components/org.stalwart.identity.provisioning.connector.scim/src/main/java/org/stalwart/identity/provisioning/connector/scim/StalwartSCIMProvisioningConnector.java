@@ -493,13 +493,34 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
     private String findUserId(Map<ClaimMapping, List<String>> attrs, String fallback)
             throws IdentityProvisioningException {
         String externalId = mappedValue(attrs, externalIdClaimUri);
-        // externalId is mandatory for connector-created accounts and is the
-        // authoritative key. Do not issue a second username lookup on every
-        // cold cache miss; use userName only when no externalId claim is supplied.
+        // WSO2 DELETE/UPDATE events can omit the mapped claim map while retaining
+        // entityName as the local username. In this connector's default mapping,
+        // that local username is the immutable Stalwart externalId, not userName.
+        if (StringUtils.isBlank(externalId) && StringUtils.isNotBlank(fallback)) {
+            String candidate = stripUserStoreDomain(fallback.trim());
+            if (StringUtils.isNotBlank(candidate) && candidate.indexOf('@') < 0) {
+                String id = findResourceId("Users", "externalId", candidate);
+                if (id != null) return id;
+                if (!candidate.equals(fallback)) {
+                    id = findResourceId("Users", "externalId", fallback.trim());
+                    if (id != null) return id;
+                }
+            }
+        }
+        // externalId is authoritative whenever supplied. Never adopt a different
+        // account by matching its email if this stable identifier fails to match.
         if (StringUtils.isNotBlank(externalId)) {
             return findResourceId("Users", "externalId", externalId);
         }
-        return findResourceId("Users", "userName", targetUserName(attrs, fallback));
+        // Email lookup is a legacy fallback only when no stable local identifier
+        // is available; numeric/bare WSO2 usernames are never treated as email.
+        String userName = mappedValue(attrs, userNameClaimUri);
+        if (StringUtils.isBlank(userName) && StringUtils.isNotBlank(fallback)
+                && fallback.trim().contains("@")) {
+            userName = fallback.trim();
+        }
+        if (StringUtils.isBlank(userName)) return null;
+        return findResourceId("Users", "userName", targetUserName(attrs, userName));
     }
 
     private String findUserIdByIdentifier(String identifier) throws IdentityProvisioningException {
