@@ -187,12 +187,29 @@ jobs:
           )
 
           print("Verified nested Gson and unsigned JAR.")
+          observer_path = (
+              "components/org.stalwart.identity.provisioning.event.handler/target/"
+              "org.stalwart.identity.provisioning.event.handler-2.0.3-SNAPSHOT.jar"
+          )
+          with zipfile.ZipFile(observer_path) as observer:
+              observer_manifest = observer.read("META-INF/MANIFEST.MF").decode("utf-8")
+              observer_names = observer.namelist()
+          assert "Bundle-SymbolicName: org.stalwart.identity.provisioning.event.handler" in observer_manifest, (
+              "Unexpected event observer Bundle-SymbolicName"
+          )
+          assert any(name.startswith("OSGI-INF/") and name.endswith(".xml") for name in observer_names), (
+              "Event observer Declarative Services descriptor is missing"
+          )
+          assert any(name.endswith("StalwartSCIMProfileEventHandler.class") for name in observer_names), (
+              "Event observer class is missing from its dedicated bundle"
+          )
+          print("Verified separate WSO2 profile event observer bundle and DS descriptor.")
           print("Verified immutable userName/externalId and disabled alias synchronization.")
           PY
       - name: Upload connector JAR
         uses: actions/upload-artifact@v6
         with:
           name: stalwart-scim-connector-2.0.3-SNAPSHOT
-          path: components/org.stalwart.identity.provisioning.connector.scim/target/*.jar
+          path: components/**/target/*.jar
           if-no-files-found: error
           retention-days: 30
