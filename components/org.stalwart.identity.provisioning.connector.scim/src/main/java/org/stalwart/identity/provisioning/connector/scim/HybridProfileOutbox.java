@@ -36,7 +36,8 @@ public final class HybridProfileOutbox {
     public static HybridProfileOutbox lookup(String jndiName) throws Exception {
         String name = jndiName == null || jndiName.isBlank() ? DEFAULT_JNDI_NAME : jndiName.trim();
         DataSource dataSource;
-        try (InitialContext context = new InitialContext()) {
+        InitialContext context = new InitialContext();
+        try {
             Object value = context.lookup(name);
             if (!(value instanceof DataSource)) {
                 throw new IllegalStateException("JNDI resource " + name + " is not a JDBC DataSource.");
@@ -44,6 +45,12 @@ public final class HybridProfileOutbox {
             dataSource = (DataSource) value;
         } catch (NamingException e) {
             throw new IllegalStateException("Unable to resolve HYBRID outbox JNDI DataSource " + name + ".", e);
+        } finally {
+            try {
+                context.close();
+            } catch (NamingException ignored) {
+                // Closing a lookup context must not hide the primary lookup result.
+            }
         }
         return new HybridProfileOutbox(dataSource);
     }
