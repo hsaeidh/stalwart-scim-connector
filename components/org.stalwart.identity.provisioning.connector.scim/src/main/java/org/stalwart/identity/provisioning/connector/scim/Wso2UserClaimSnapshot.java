@@ -44,7 +44,7 @@ public final class Wso2UserClaimSnapshot {
             throw new IllegalStateException("WSO2 RealmService is not available to the Stalwart connector bundle.");
         }
         int tenantId = PrivilegedCarbonContext.getThreadLocalCarbonContext().getTenantId();
-        if (tenantId < 0) {
+        if (tenantId == -1) {
             throw new IllegalStateException("The current WSO2 tenant context is not available.");
         }
         UserRealm realm = realmService.getTenantUserRealm(tenantId);
