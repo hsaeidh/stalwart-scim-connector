@@ -160,7 +160,7 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
                 throw new IdentityProvisioningException("HYBRID mode requires enable-profile-updates=true.");
             }
             if (StringUtils.isBlank(hybridScopeId)
-                    || !hybridScopeId.trim().matches("^[^|]+\\|[^|]+(?:\\|[^|]+)?$")) {
+                    || !hybridScopeId.trim().matches("^[^|]+\\|[^|]+\\|[^|]+(?:\\|[^|]+)?$")) {
                 throw new IdentityProvisioningException(
                         "hybrid-scope-id is required in HYBRID mode and must be tenantDomain|userStoreDomain.");
             }
