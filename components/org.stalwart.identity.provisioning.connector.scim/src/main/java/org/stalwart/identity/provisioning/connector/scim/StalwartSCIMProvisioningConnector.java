@@ -166,6 +166,11 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
                         "hybrid-scope-id is required in HYBRID mode and must be tenantDomain|userStoreDomain.");
             }
             hybridScopeId = hybridScopeId.trim();
+            String targetId = System.getProperty("stalwart.scim.hybrid.target-id", "default");
+            if (!hybridScopeId.startsWith(targetId + "|")) {
+                throw new IdentityProvisioningException(
+                        "hybrid-scope-id must start with JVM property -Dstalwart.scim.hybrid.target-id.");
+            }
             if (!Boolean.parseBoolean(System.getProperty("stalwart.scim.hybrid.enabled", "false"))) {
                 throw new IdentityProvisioningException(
                         "HYBRID mode requires JVM system property -Dstalwart.scim.hybrid.enabled=true "
