@@ -39,8 +39,8 @@ public final class StalwartSCIMFactorySmokeTest {
         }
 
         List<Property> properties = factory.getConfigurationProperties();
-        if (properties == null || properties.size() != 19) {
-            throw new IllegalStateException("Expected 19 configuration properties, got: "
+        if (properties == null || properties.size() != 21) {
+            throw new IllegalStateException("Expected 21 configuration properties, got: "
                     + (properties == null ? "null" : properties.size()));
         }
 
@@ -73,7 +73,9 @@ public final class StalwartSCIMFactorySmokeTest {
                 StalwartSCIMProvisioningConnectorConstants.PROVISIONING_MODE,
                 StalwartSCIMProvisioningConnectorConstants.BULK_FALLBACK_TO_INDIVIDUAL,
                 StalwartSCIMProvisioningConnectorConstants.BULK_REQUEST_TIMEOUT_MS,
-                StalwartSCIMProvisioningConnectorConstants.BULK_MAX_PAYLOAD_BYTES
+                StalwartSCIMProvisioningConnectorConstants.BULK_MAX_PAYLOAD_BYTES,
+                StalwartSCIMProvisioningConnectorConstants.HYBRID_OUTBOX_JNDI_NAME,
+                StalwartSCIMProvisioningConnectorConstants.HYBRID_SCOPE_ID
         };
         for (String name : expectedNames) {
             if (!byName.containsKey(name)) {
@@ -103,6 +105,9 @@ public final class StalwartSCIMFactorySmokeTest {
         assertDefault(byName, StalwartSCIMProvisioningConnectorConstants.BULK_FALLBACK_TO_INDIVIDUAL, "true");
         assertDefault(byName, StalwartSCIMProvisioningConnectorConstants.BULK_REQUEST_TIMEOUT_MS, "30000");
         assertDefault(byName, StalwartSCIMProvisioningConnectorConstants.BULK_MAX_PAYLOAD_BYTES, "900000");
+        assertDefault(byName, StalwartSCIMProvisioningConnectorConstants.HYBRID_OUTBOX_JNDI_NAME,
+                "jdbc/WSO2CarbonDB");
+        assertDefault(byName, StalwartSCIMProvisioningConnectorConstants.HYBRID_SCOPE_ID, "");
 
         // Verify the new mode can be initialized without changing the OSGi factory contract.
         Property baseUrl = new Property();
