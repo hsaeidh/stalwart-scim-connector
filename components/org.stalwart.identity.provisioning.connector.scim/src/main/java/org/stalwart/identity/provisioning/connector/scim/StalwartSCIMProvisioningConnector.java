@@ -232,29 +232,62 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
             throw new IdentityProvisioningException(
                     "A non-empty stable WSO2 externalId claim is required to reconcile a Stalwart account.");
         }
+        String userName = null;
         String existingId = findResourceId("Users", "externalId", externalId);
+        if (existingId == null) {
+            userName = targetUserName(attrs, entity.getEntityName());
+            existingId = resolveExistingUserIdForCreate(externalId, userName);
+        }
         List<String> initialGroups = groupNames(attrs);
         boolean emailEntitled = initialGroups != null
                 && initialGroups.stream().anyMatch(this::isEmailMembershipGroup);
         // WSO2 can retry a failed provisioning event. Reuse an existing account so
         // a later group-membership failure does not cause a duplicate-user conflict.
         if (existingId == null) {
-            String userName = targetUserName(attrs, entity.getEntityName());
             JsonObject user = userPayload(attrs, userName);
             // Email entitlement takes precedence over a mapped active claim. Fold it
             // into the create document instead of issuing a redundant follow-up PATCH.
             if (emailEntitled) {
                 user.addProperty("active", true);
             }
-            request("POST", "/Users", user);
-            // Initial memberships are applied once, after successful account creation.
-            updateUserGroupMemberships(entity);
+            JsonObject created = request("POST", "/Users", user);
+            if (!created.has("id")) {
+                // A concurrent create may win between the preflight lookup and POST.
+                // Reconcile that race before deciding whether this is a new account.
+                existingId = resolveExistingUserIdForCreate(externalId, userName);
+                if (existingId == null) {
+                    throw new IdentityProvisioningException(
+                            "Stalwart accepted no identifiable User resource after POST; provisioning outcome is unresolved.");
+                }
+                updateUser(entity, emailEntitled);
+            } else {
+                // Initial memberships are applied once, after successful account creation.
+                updateUserGroupMemberships(entity);
+            }
         } else {
             log.info("Stalwart user already exists; reconciling attributes and membership deltas.");
             // Reconciliation must not require the current email claim. The stable
             // externalId resolved the existing Stalwart account above.
             updateUser(entity, emailEntitled);
         }
+    }
+
+    private String resolveExistingUserIdForCreate(String externalId, String userName)
+            throws IdentityProvisioningException {
+        String byExternalId = findResourceId("Users", "externalId", externalId);
+        if (byExternalId != null) return byExternalId;
+
+        String byUserName = findResourceId("Users", "userName", userName);
+        if (byUserName == null) return null;
+
+        JsonObject existing = request("GET", "/Users/" + pathSegment(byUserName), null);
+        String actualExternalId = existing.has("externalId") && !existing.get("externalId").isJsonNull()
+                ? existing.get("externalId").getAsString() : null;
+        if (externalId.equals(actualExternalId)) return byUserName;
+
+        throw new IdentityProvisioningException(
+                "Stalwart userName already exists but belongs to a different externalId. "
+                        + "The connector will not adopt or overwrite that account.");
     }
 
     private void updateUser(ProvisioningEntity entity) throws IdentityProvisioningException {
