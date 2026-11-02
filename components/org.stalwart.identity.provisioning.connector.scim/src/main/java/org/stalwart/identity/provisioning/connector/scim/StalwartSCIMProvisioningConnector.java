@@ -159,9 +159,16 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
             if (!enableProfileUpdates) {
                 throw new IdentityProvisioningException("HYBRID mode requires enable-profile-updates=true.");
             }
-            if (StringUtils.isBlank(hybridScopeId)) {
+            if (StringUtils.isBlank(hybridScopeId)
+                    || !hybridScopeId.trim().matches("^[^|]+\\|[^|]+$")) {
                 throw new IdentityProvisioningException(
-                        "hybrid-scope-id is required in HYBRID mode and must match tenantDomain|userStoreDomain.");
+                        "hybrid-scope-id is required in HYBRID mode and must be tenantDomain|userStoreDomain.");
+            }
+            hybridScopeId = hybridScopeId.trim();
+            if (!Boolean.parseBoolean(System.getProperty("stalwart.scim.hybrid.enabled", "false"))) {
+                throw new IdentityProvisioningException(
+                        "HYBRID mode requires JVM system property -Dstalwart.scim.hybrid.enabled=true "
+                                + "so POST_SET_USER_CLAIMS can enqueue complete WSO2 snapshots.");
             }
             if (StringUtils.isBlank(hybridOutboxJndiName)) {
                 hybridOutboxJndiName = HybridProfileOutbox.DEFAULT_JNDI_NAME;
