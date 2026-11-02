@@ -267,12 +267,12 @@ public final class HybridProfileOutbox {
                         + "PRIORITY INTEGER NOT NULL,"
                         + "STATUS VARCHAR(16) NOT NULL,"
                         + "ATTEMPTS INTEGER NOT NULL,"
-                        + "NEXT_ATTEMPT_AT BIGINT NOT NULL,"
+                        + "NEXT_ATTEMPT_AT DECIMAL(19,0) NOT NULL,"
                         + "LEASE_OWNER VARCHAR(128),"
-                        + "LEASE_UNTIL BIGINT,"
+                        + "LEASE_UNTIL DECIMAL(19,0),"
                         + "LAST_ERROR VARCHAR(2000),"
-                        + "CREATED_AT BIGINT NOT NULL,"
-                        + "UPDATED_AT BIGINT NOT NULL)");
+                        + "CREATED_AT DECIMAL(19,0) NOT NULL,"
+                        + "UPDATED_AT DECIMAL(19,0) NOT NULL)");
             } catch (SQLException e) {
                 // Another WSO2 node may have created the shared table concurrently.
                 boolean tableNowExists = false;
