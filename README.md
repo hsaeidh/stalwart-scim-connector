@@ -17,6 +17,12 @@ are now in the branch:
 - A repeated WSO2 POST first resolves the existing Stalwart user by immutable
   `externalId`; it does not require the email claim when the account already
   exists.
+- When WSO2 omits mapped claims on UPDATE/DELETE, the connector can use the
+  default-mapped local `entityName` as `externalId`; numeric usernames are never
+  misinterpreted as email addresses.
+- Before creating a user, a username collision is read and its `externalId` is
+  compared. A different externalId is rejected explicitly; a matching one is
+  reconciled instead of issuing another POST.
 - DELETE cache invalidation uses the resolved Stalwart resource ID and no
   longer requires an email claim on the delete event.
 - A `userName` uniqueness conflict is not accepted as success unless the
