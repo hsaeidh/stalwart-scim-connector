@@ -208,19 +208,20 @@ public final class ScimOperationOutbox {
                 return;
             }
             try (Statement statement = connection.createStatement()) {
-                statement.executeUpdate("CREATE TABLE " + TABLE + " ("
+                String largeText = largeTextType(metadata);
+            statement.executeUpdate("CREATE TABLE " + TABLE + " ("
                         + "OP_ID VARCHAR(36) NOT NULL PRIMARY KEY,"
                         + "SCOPE_KEY VARCHAR(512) NOT NULL,"
                         + "ENDPOINT_URL VARCHAR(2048) NOT NULL,"
                         + "METHOD VARCHAR(8) NOT NULL,"
                         + "RESOURCE_PATH VARCHAR(4096) NOT NULL,"
-                        + "DATA_JSON CLOB,"
+                        + "DATA_JSON " + largeText + ",
                         + "STATUS VARCHAR(16) NOT NULL,"
                         + "ATTEMPTS INTEGER NOT NULL,"
                         + "NEXT_ATTEMPT_AT DECIMAL(19,0) NOT NULL,"
                         + "LEASE_OWNER VARCHAR(128),"
                         + "LEASE_UNTIL DECIMAL(19,0),"
-                        + "RESPONSE_JSON CLOB,"
+                        + "RESPONSE_JSON " + largeText + ",
                         + "LAST_ERROR VARCHAR(2000),"
                         + "CREATED_AT DECIMAL(19,0) NOT NULL,"
                         + "UPDATED_AT DECIMAL(19,0) NOT NULL)");
@@ -229,6 +230,13 @@ public final class ScimOperationOutbox {
             }
             ensureIndex(connection, metadata);
         }
+    }
+
+    private String largeTextType(DatabaseMetaData metadata) throws SQLException {
+        String product = metadata.getDatabaseProductName().toLowerCase(java.util.Locale.ROOT);
+        if (product.contains("postgres")) return "TEXT";
+        if (product.contains("mysql") || product.contains("mariadb")) return "LONGTEXT";
+        return "CLOB";
     }
 
     private boolean tableExists(DatabaseMetaData metadata) throws SQLException {
