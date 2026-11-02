@@ -14,6 +14,7 @@ import org.osgi.service.component.annotations.Component;
 import org.osgi.service.component.annotations.Deactivate;
 import org.wso2.carbon.identity.provisioning.AbstractProvisioningConnectorFactory;
 import org.stalwart.identity.provisioning.connector.scim.StalwartSCIMProvisioningConnectorFactory;
+import org.stalwart.identity.provisioning.connector.scim.StalwartSCIMProvisioningConnector;
 
 @Component(
         name = "org.stalwart.identity.provisioning.connector.scim.internal.StalwartSCIMConnectorServiceComponent",
@@ -89,6 +90,7 @@ public class StalwartSCIMConnectorServiceComponent {
     @Deactivate
     protected void deactivate(ComponentContext context) {
         System.err.println(">>> STALWART-SCIM DEACTIVATE v2.0.3");
+        StalwartSCIMProvisioningConnector.shutdownHybridScheduler();
         unregisterFactory();
     }
 
