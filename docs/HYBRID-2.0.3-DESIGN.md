@@ -84,6 +84,8 @@ Coalesce repeated profile changes for one account into one latest desired value.
 ## Identity, tenant isolation, and SCIM correctness
 
 - `externalId` is immutable after creation and is the authoritative cross-system key.
+- For UPDATE/DELETE events whose claim map is absent, the default mapping may resolve the local WSO2 `entityName` as `externalId`; this fallback is allowed only when `external-id-claim-uri` is the default username claim. A supplied but non-matching externalId is never bypassed with an email lookup.
+- Before POST, if lookup by externalId misses, lookup by userName and read the resource. Reuse it only when its externalId exactly matches; reject a different externalId. If a concurrent create wins between preflight and POST, reconcile by the same rule before treating the POST as successful.
 - `userName` is the initial primary email/login and is immutable in this connector's update contract.
 - Resolve resource IDs within the configured SCIM endpoint and tenant security context; never share cache or queue identity across organizations or user stores.
 - Escape SCIM filter string literals and URL-encode filter query parameters and resource path segments.
