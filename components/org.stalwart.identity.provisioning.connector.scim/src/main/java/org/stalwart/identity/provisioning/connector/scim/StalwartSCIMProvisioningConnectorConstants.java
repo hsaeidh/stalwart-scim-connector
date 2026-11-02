@@ -26,4 +26,6 @@ public final class StalwartSCIMProvisioningConnectorConstants {
     public static final String BULK_FALLBACK_TO_INDIVIDUAL = "bulk-fallback-to-individual";
     public static final String BULK_REQUEST_TIMEOUT_MS = "bulk-request-timeout-ms";
     public static final String BULK_MAX_PAYLOAD_BYTES = "bulk-max-payload-bytes";
+    public static final String HYBRID_OUTBOX_JNDI_NAME = "hybrid-outbox-jndi-name";
+    public static final String HYBRID_SCOPE_ID = "hybrid-scope-id";
 }
