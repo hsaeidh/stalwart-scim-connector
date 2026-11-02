@@ -58,6 +58,7 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
     private static final String USER_SCHEMA = "urn:ietf:params:scim:schemas:core:2.0:User";
     private static final String PATCH_SCHEMA = "urn:ietf:params:scim:api:messages:2.0:PatchOp";
     private static final String USERNAME_CLAIM = IdentityProvisioningConstants.USERNAME_CLAIM_URI;
+    private static final String DEFAULT_EXTERNAL_ID_CLAIM_URI = "http://wso2.org/claims/username";
     private static final HttpClient HTTP_CLIENT = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(10)).build();
     private static final long CACHE_TTL_MILLIS = Duration.ofMinutes(5).toMillis();
@@ -510,7 +511,7 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
         // With the default mapping, WSO2 entityName is the local username and
         // therefore the same stable value used as Stalwart externalId. POST
         // retries caused by later membership/profile events may omit claim attrs.
-        if (StringUtils.isBlank(externalId) && USERNAME_CLAIM.equals(externalIdClaimUri)
+        if (StringUtils.isBlank(externalId) && DEFAULT_EXTERNAL_ID_CLAIM_URI.equals(externalIdClaimUri)
                 && StringUtils.isNotBlank(entity.getEntityName())
                 && entity.getEntityName().indexOf('@') < 0) {
             externalId = stripUserStoreDomain(entity.getEntityName().trim());
