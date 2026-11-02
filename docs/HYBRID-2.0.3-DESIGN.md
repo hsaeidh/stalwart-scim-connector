@@ -2,7 +2,7 @@
 
 ## Status
 
-This document is the implementation contract for the 2.0.3 development line. A separate observation-only WSO2 event-handler bundle has been added and its source compiles in CI; it is not yet proven in a live IS 7.3.0 runtime and it does not enqueue or provision users. Hybrid queueing, five-minute scheduling, full snapshot enrichment, and CSV-import coverage are not yet implemented.
+The 2.0.3 branch now contains the first implementation of HYBRID mode: immediate Individual creation, a separate WSO2 event-handler bundle that reads the complete current name snapshot, a JDBC durable outbox, five-minute scheduling, multi-operation Bulk PATCH, per-operation results, retry/dead-letter handling, and ambiguous-outcome reconciliation. The Java build and H2 outbox tests are being validated in CI. OSGi resolution, actual event delivery, CSV import behavior, multi-node behavior on the production database, and live Stalwart Enterprise interoperability remain unverified; therefore this is still a development snapshot, not a production release.
 
 ## Compatibility and modes
 
@@ -14,27 +14,27 @@ This document is the implementation contract for the 2.0.3 development line. A s
 
 ## Event ingress and duplicate prevention
 
-WSO2 event subscriptions of interest are `POST_ADD_USER` and `POST_SET_USER_CLAIMS`. The WSO2 event contract exposes properties including the user name, tenant domain, and user-store manager. After a claims event, the observer/dispatcher should use the supplied user-store context to read the authoritative current FIRSTNAME, LASTNAME, and DISPLAYNAME values; the event payload itself must not be assumed to contain a complete profile. The event handler must initially run in observation mode in a real IS 7.3.0 test environment. It must log event type and a privacy-safe correlation marker, not claim values, passwords, tokens, or full user records.
+WSO2 event subscriptions are `POST_ADD_USER` and `POST_SET_USER_CLAIMS`. The separate event-handler bundle registers an `AbstractEventHandler` through OSGi Declarative Services. For `POST_SET_USER_CLAIMS`, it identifies changed name claims from `USER_CLAIMS`, reads the complete current FIRSTNAME/LASTNAME/DISPLAYNAME/externalId snapshot through the supplied user-store manager, and enqueues the authoritative displayName. DISPLAYNAME change has priority; otherwise a FIRSTNAME or LASTNAME change composes from both current name parts. The handler never calls Stalwart directly and never logs claim values, passwords, tokens, or full user records.
 
-Do not let the event handler independently call Stalwart while the outbound connector also handles the same mutation. Both ingress paths, if both are eventually required, must call one dispatcher/outbox and share a deterministic idempotency key. Until CSV-import behavior is proven, the existing outbound connector remains authoritative.
+In HYBRID mode, the outbound connector suppresses its synchronous profile PATCH path; the event handler is the single profile ingress. User creation remains immediate through the connector. Active state, Email entitlement, distribution-group membership, and deletion remain synchronous. This prevents duplicate profile writes. CSV import behavior must be verified before release; if CSV does not emit POST_SET_USER_CLAIMS, HYBRID must not be enabled for that import path until a supported fallback ingress is implemented.
 
-The event-handler bundle is separate from the outbound provisioning connector and registers an `AbstractEventHandler` service through OSGi Declarative Services. Its current implementation is observation-only. The event API dependency and bundle compile have passed CI, but OSGi resolution and event delivery must still be verified against the exact WSO2 IS 7.3.0 distribution.
+The event handler and provisioning connector are separate bundles. The event handler writes to the same JDBC outbox table used by the connector's scheduler. Its scope is `targetId|tenantDomain|userStoreDomain`, or `targetId|organizationId|tenantDomain|userStoreDomain` when the event exposes organization context. `targetId` is set by JVM property `stalwart.scim.hybrid.target-id` and must be unique per Stalwart endpoint.
 
 ## Durable queue requirements
 
-An in-memory queue is prohibited: it loses accepted updates on restart and cannot coordinate multiple IS nodes.
+An in-memory queue is prohibited. The branch implements a JDBC outbox table named `STALWART_SCIM_PROFILE_OUTBOX`, created on first use through the configured JNDI DataSource (default `jdbc/WSO2CarbonDB`). The same shared database must be used by every WSO2 node.
 
-Before enabling `HYBRID`, select and implement a transactional durable store that:
-- survives JVM and host restart;
-- supports atomic enqueue/coalesce/claim/acknowledge operations;
-- prevents two scheduler instances from flushing the same row concurrently;
-- scopes records by SCIM tenant/base URL, WSO2 organization, user-store domain, and immutable externalId;
-- stores only the latest intended profile state and a stable operation/idempotency key;
-- supports retry with bounded backoff and a dead-letter/error state;
-- never retries an ambiguous non-idempotent operation blindly;
-- is configurable and documented for backup, retention, and multi-node deployment.
+The implementation provides:
+- atomic enqueue/coalesce in a transaction, keyed by SHA-256(scope + externalId);
+- source priority so a full event-derived snapshot cannot be overwritten by a lower-priority partial connector callback;
+- `SELECT ... FOR UPDATE` row claims with owner and lease expiry;
+- durable PENDING, IN_FLIGHT, SENT and DEAD states;
+- bounded exponential retry and a ten-attempt dead-letter threshold;
+- scope isolation by target ID, organization when available, tenant domain, user-store domain, and immutable externalId;
+- no Stalwart credentials or bearer tokens stored in the outbox;
+- no in-memory queue as the source of truth.
 
-A local file queue is not an acceptable default for a clustered WSO2 deployment. Do not enable HYBRID until the selected storage is proven transaction-safe for the target topology.
+The scheduler runs every five minutes and claims at most 25 entries per pass. H2 tests cover coalescing, lease exclusion and terminal retry state. Production DB dialect, cluster locking and restart recovery still require validation on the actual WSO2CarbonDB backend. Configure `-Dstalwart.scim.hybrid.enabled=true`, `-Dstalwart.scim.hybrid.outbox.jndi=jdbc/WSO2CarbonDB`, and a unique `-Dstalwart.scim.hybrid.target-id` only after the event handler is installed and tested.
 
 ## SCIM User payload contract
 
