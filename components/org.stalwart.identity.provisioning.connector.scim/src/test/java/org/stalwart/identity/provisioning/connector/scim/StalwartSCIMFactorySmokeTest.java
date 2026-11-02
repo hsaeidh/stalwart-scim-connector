@@ -132,7 +132,7 @@ public final class StalwartSCIMFactorySmokeTest {
         System.out.println("Connector type: " + factory.getConnectorType());
         System.out.println("Properties count: " + properties.size());
         System.out.println("Required claim mapping defaults: emailaddress -> userName, username -> externalId");
-        System.out.println("SMOKE TEST PASSED v2.0.2");
+        System.out.println("SMOKE TEST PASSED v2.0.3");
     }
 
     private static void assertBulkTransportRequest() {
@@ -197,8 +197,10 @@ public final class StalwartSCIMFactorySmokeTest {
             JsonObject operation = sent.getAsJsonArray("Operations").get(0).getAsJsonObject();
             if (!"POST".equals(operation.get("method").getAsString())
                     || !"/Users".equals(operation.get("path").getAsString())
+                    || operation.get("bulkId") == null
+                    || operation.get("bulkId").getAsString().isBlank()
                     || !"bulk-smoke-id".equals(operation.getAsJsonObject("data").get("externalId").getAsString())) {
-                throw new IllegalStateException("SCIM Bulk operation was serialized incorrectly.");
+                throw new IllegalStateException("SCIM Bulk POST must include bulkId and preserve the expected payload.");
             }
         } catch (Exception e) {
             throw new IllegalStateException("SCIM Bulk transport smoke test failed.", e);
