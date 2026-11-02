@@ -30,21 +30,21 @@ public class StalwartSCIMConnectorServiceComponent {
      * commons-logging initialization completed.
      */
     static {
-        System.err.println(">>> STALWART-SCIM STATIC INIT ENTERING v2.0.3");
+        System.err.println(">>> STALWART-SCIM STATIC INIT ENTERING v2.0.4");
         LOG = LogFactory.getLog(StalwartSCIMConnectorServiceComponent.class);
-        System.err.println(">>> STALWART-SCIM STATIC INIT DONE v2.0.3 log=" + LOG);
+        System.err.println(">>> STALWART-SCIM STATIC INIT DONE v2.0.4 log=" + LOG);
     }
 
     private ServiceRegistration<?> factoryRegistration;
 
     public StalwartSCIMConnectorServiceComponent() {
         super();
-        System.err.println(">>> STALWART-SCIM CONSTRUCTOR v2.0.3");
+        System.err.println(">>> STALWART-SCIM CONSTRUCTOR v2.0.4");
     }
 
     @Activate
     protected void activate(ComponentContext context) {
-        System.err.println(">>> STALWART-SCIM ACTIVATE START v2.0.3");
+        System.err.println(">>> STALWART-SCIM ACTIVATE START v2.0.4");
         try {
             if (context == null) {
                 throw new IllegalStateException("DS supplied a null ComponentContext.");
@@ -69,10 +69,10 @@ public class StalwartSCIMConnectorServiceComponent {
                 throw new IllegalStateException("OSGi registerService returned null for provisioning factory.");
             }
 
-            System.err.println(">>> STALWART-SCIM ACTIVATE END v2.0.3 — READY");
+            System.err.println(">>> STALWART-SCIM ACTIVATE END v2.0.4 — READY");
             LOG.info("Stalwart SCIM connector activated; service registration=" + factoryRegistration);
         } catch (Throwable t) {
-            System.err.println(">>> STALWART-SCIM ACTIVATE FAILED v2.0.3: " + t);
+            System.err.println(">>> STALWART-SCIM ACTIVATE FAILED v2.0.4: " + t);
             t.printStackTrace(System.err);
             LOG.error("Stalwart SCIM connector activation failed.", t);
 
@@ -89,7 +89,7 @@ public class StalwartSCIMConnectorServiceComponent {
 
     @Deactivate
     protected void deactivate(ComponentContext context) {
-        System.err.println(">>> STALWART-SCIM DEACTIVATE v2.0.3");
+        System.err.println(">>> STALWART-SCIM DEACTIVATE v2.0.4");
         StalwartSCIMProvisioningConnector.shutdownHybridScheduler();
         unregisterFactory();
     }
