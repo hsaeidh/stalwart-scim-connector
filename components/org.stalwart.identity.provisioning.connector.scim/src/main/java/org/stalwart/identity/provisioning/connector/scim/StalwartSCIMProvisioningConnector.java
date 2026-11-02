@@ -216,7 +216,17 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
 
     private void createUser(ProvisioningEntity entity) throws IdentityProvisioningException {
         Map<ClaimMapping, List<String>> attrs = entity.getAttributes();
-        String userName = targetUserName(attrs, entity.getEntityName());
+        // Resolve by immutable externalId before requiring the mutable-to-us
+        // provisioning input userName claim. WSO2 may invoke POST again for a
+        // membership/claim event whose attribute map omits emailaddress.
+        String externalId = mappedValue(attrs, externalIdClaimUri);
+        if (StringUtils.isBlank(externalId)) {
+            throw new IdentityProvisioningException(
+                    "A non-empty stable WSO2 externalId claim is required to reconcile a Stalwart account.");
+        }
+        String existingId = findResourceId("Users", "externalId", externalId);
+        String userName = existingId == null ? targetUserName(attrs, entity.getEntityName())
+                : mappedValue(attrs, userNameClaimUri);
         List<String> initialGroups = groupNames(attrs);
         boolean emailEntitled = initialGroups != null
                 && initialGroups.stream().anyMatch(this::isEmailMembershipGroup);
@@ -228,7 +238,6 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
         }
         // WSO2 can retry a failed provisioning event. Reuse an existing account so
         // a later group-membership failure does not cause a duplicate-user conflict.
-        String existingId = findUserId(attrs, entity.getEntityName());
         if (existingId == null) {
             request("POST", "/Users", user);
         } else {
@@ -327,8 +336,11 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
         String id = findUserId(entity.getAttributes(), entity.getEntityName());
         if (id != null) {
             request("DELETE", "/Users/" + pathSegment(id), null);
-            invalidateResourceId("Users", "externalId", mappedValue(entity.getAttributes(), externalIdClaimUri));
-            invalidateResourceId("Users", "userName", targetUserName(entity.getAttributes(), entity.getEntityName()));
+            // Invalidate every cached lookup for this resource ID. DELETE events
+            // commonly omit emailaddress; cache invalidation must not depend on it.
+            invalidateResourceIdById("Users", id);
+            invalidateResourceId("Users", "externalId",
+                    mappedValue(entity.getAttributes(), externalIdClaimUri));
         }
     }
 
@@ -560,6 +572,13 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
         if (StringUtils.isNotBlank(value)) RESOURCE_ID_CACHE.remove(cacheKey(resource, attribute, value));
     }
 
+    private void invalidateResourceIdById(String resource, String id) {
+        if (StringUtils.isBlank(resource) || StringUtils.isBlank(id)) return;
+        String marker = "|" + resource + "|";
+        RESOURCE_ID_CACHE.entrySet().removeIf(entry ->
+                entry.getKey().contains(marker) && id.equals(entry.getValue().id));
+    }
+
     private String profileUpdateBaseUrl() {
         return enableProfileUpdates && StringUtils.isNotBlank(profileUpdateScimUrl) ? profileUpdateScimUrl : baseUrl;
     }
@@ -588,6 +607,11 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
         JsonObject operation = new JsonObject();
         operation.addProperty("method", method.toUpperCase(java.util.Locale.ROOT));
         operation.addProperty("path", path);
+        // Stalwart validates bulkId for POST operations even when the operation
+        // is independent and no bulkId reference is used by another operation.
+        if ("POST".equalsIgnoreCase(method)) {
+            operation.addProperty("bulkId", java.util.UUID.randomUUID().toString());
+        }
         if (data != null) operation.add("data", data);
 
         JsonArray operations = new JsonArray();
