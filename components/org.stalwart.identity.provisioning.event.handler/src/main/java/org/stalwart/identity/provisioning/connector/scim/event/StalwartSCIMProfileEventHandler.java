@@ -198,7 +198,9 @@ public final class StalwartSCIMProfileEventHandler extends AbstractEventHandler 
 
     private Map<String, String> readClaims(Object userStoreManager, String userName, String[] claimUris)
             throws Exception {
-        Method method = userStoreManager.getClass().getMethod(
+        ClassLoader loader = userStoreManager.getClass().getClassLoader();
+        Class<?> managerApi = Class.forName("org.wso2.carbon.user.core.UserStoreManager", true, loader);
+        Method method = managerApi.getMethod(
                 "getUserClaimValues", String.class, String[].class, String.class);
         Object value = method.invoke(userStoreManager, userName, claimUris, null);
         if (!(value instanceof Map<?, ?> values)) {
