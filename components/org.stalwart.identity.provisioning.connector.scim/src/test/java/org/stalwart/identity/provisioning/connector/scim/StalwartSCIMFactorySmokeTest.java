@@ -303,10 +303,17 @@ public final class StalwartSCIMFactorySmokeTest {
     private static void assertBulkMicroBatch() throws Exception {
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         AtomicReference<JsonObject> received = new AtomicReference<>();
+        java.util.concurrent.atomic.AtomicInteger attempts = new java.util.concurrent.atomic.AtomicInteger();
         server.createContext("/scim/v2/Bulk", exchange -> {
             JsonObject request = JsonParser.parseString(new String(exchange.getRequestBody().readAllBytes(),
                     StandardCharsets.UTF_8)).getAsJsonObject();
             received.set(request);
+            if (attempts.incrementAndGet() == 1) {
+                exchange.getResponseHeaders().set("Retry-After", "0");
+                exchange.sendResponseHeaders(429, -1);
+                exchange.close();
+                return;
+            }
             JsonArray results = new JsonArray();
             JsonArray submitted = request.getAsJsonArray("Operations");
             for (int i = 0; i < submitted.size(); i++) {
@@ -340,6 +347,13 @@ public final class StalwartSCIMFactorySmokeTest {
             user.addProperty("externalId", "one");
             JsonObject patch = new JsonObject();
             patch.addProperty("schemas", "urn:ietf:params:scim:api:messages:2.0:PatchOp");
+            JsonArray patchOperations = new JsonArray();
+            JsonObject replace = new JsonObject();
+            replace.addProperty("op", "replace");
+            replace.addProperty("path", "displayName");
+            replace.addProperty("value", "One User");
+            patchOperations.add(replace);
+            patch.add("Operations", patchOperations);
             var pool = Executors.newFixedThreadPool(2);
             try {
                 Future<?> first = pool.submit(() -> {
@@ -354,6 +368,9 @@ public final class StalwartSCIMFactorySmokeTest {
             } finally { pool.shutdownNow(); }
             if (received.get() == null || received.get().getAsJsonArray("Operations").size() != 2) {
                 throw new IllegalStateException("Concurrent changes were not combined into one Bulk request.");
+            }
+            if (attempts.get() != 2) {
+                throw new IllegalStateException("A retry-safe Bulk request must retry a transient HTTP 429 response.");
             }
         } finally { server.stop(0); }
     }
