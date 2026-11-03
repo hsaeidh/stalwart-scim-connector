@@ -498,7 +498,8 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
         }
         // The entity name is only a fallback when it is a stable local username,
         // never when it is the mutable primary email address.
-        if (StringUtils.isBlank(fallback) || fallback.indexOf('@') >= 0) return null;
+        if (!DEFAULT_EXTERNAL_ID_CLAIM_URI.equals(externalIdClaimUri)
+                || StringUtils.isBlank(fallback) || fallback.indexOf('@') >= 0) return null;
         return stripUserStoreDomain(fallback.trim());
     }
 
@@ -545,7 +546,9 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
         // WSO2 DELETE/UPDATE events can omit the mapped claim map while retaining
         // entityName as the local username. In this connector's default mapping,
         // that local username is the immutable Stalwart externalId, not userName.
-        if (StringUtils.isBlank(externalId) && StringUtils.isNotBlank(fallback)) {
+        if (StringUtils.isBlank(externalId)
+                && DEFAULT_EXTERNAL_ID_CLAIM_URI.equals(externalIdClaimUri)
+                && StringUtils.isNotBlank(fallback)) {
             String candidate = stripUserStoreDomain(fallback.trim());
             if (StringUtils.isNotBlank(candidate) && candidate.indexOf('@') < 0) {
                 String id = findResourceId("Users", "externalId", candidate);
