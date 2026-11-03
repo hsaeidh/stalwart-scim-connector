@@ -23,6 +23,7 @@ import org.wso2.carbon.identity.provisioning.ProvisionedIdentifier;
 import org.wso2.carbon.identity.provisioning.ProvisioningEntity;
 import org.wso2.carbon.identity.provisioning.ProvisioningEntityType;
 import org.wso2.carbon.identity.provisioning.ProvisioningUtil;
+import org.wso2.carbon.context.PrivilegedCarbonContext;
 
 import java.io.IOException;
 import java.net.URI;
@@ -58,6 +59,7 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
 
     private static final String USER_SCHEMA = "urn:ietf:params:scim:schemas:core:2.0:User";
     private static final String PATCH_SCHEMA = "urn:ietf:params:scim:api:messages:2.0:PatchOp";
+    private static final String SEARCH_SCHEMA = "urn:ietf:params:scim:api:messages:2.0:SearchRequest";
     private static final String USERNAME_CLAIM = IdentityProvisioningConstants.USERNAME_CLAIM_URI;
     private static final String DEFAULT_EXTERNAL_ID_CLAIM_URI = "http://wso2.org/claims/username";
     private static final HttpClient HTTP_CLIENT = HttpClient.newBuilder()
@@ -250,15 +252,14 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
         List<String> initialGroups = groupNames(attrs);
         boolean emailEntitled = initialGroups != null
                 && initialGroups.stream().anyMatch(this::isEmailMembershipGroup);
+        boolean activeClaimAllows = activeClaimAllows(attrs);
         // WSO2 can retry a failed provisioning event. Reuse an existing account so
         // a later group-membership failure does not cause a duplicate-user conflict.
         if (existingId == null) {
             JsonObject user = userPayload(attrs, userName, externalId);
-            // Email entitlement takes precedence over a mapped active claim. Fold it
-            // into the create document instead of issuing a redundant follow-up PATCH.
-            if (emailEntitled) {
-                user.addProperty("active", true);
-            }
+            // Fail closed: account activation requires positive Email-group membership.
+            // An optional active claim may further disable access, but can never grant it.
+            user.addProperty("active", emailEntitled && activeClaimAllows);
             JsonObject created = request("POST", "/Users", user);
             if (!created.has("id")) {
                 // A concurrent create may win between the preflight lookup and POST.
@@ -268,7 +269,7 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
                     throw new IdentityProvisioningException(
                             "Stalwart accepted no identifiable User resource after POST; provisioning outcome is unresolved.");
                 }
-                updateUser(entity, emailEntitled);
+                updateUser(entity, initialGroups == null ? null : emailEntitled);
             } else {
                 // Initial memberships are applied once, after successful account creation.
                 }
@@ -276,7 +277,7 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
             log.info("Stalwart user already exists; reconciling attributes and membership deltas.");
             // Reconciliation must not require the current email claim. The stable
             // externalId resolved the existing Stalwart account above.
-            updateUser(entity, emailEntitled);
+            updateUser(entity, initialGroups == null ? null : emailEntitled);
         }
     }
 
@@ -302,10 +303,15 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
     }
 
     private void updateUser(ProvisioningEntity entity) throws IdentityProvisioningException {
-        updateUser(entity, false);
+        updateUser(entity, null);
     }
 
-    private void updateUser(ProvisioningEntity entity, boolean forceEmailEntitlement)
+    /**
+     * A non-null membership snapshot is authoritative (true or false). Null means
+     * the event did not carry the complete current group list, so only explicit
+     * Email-group deltas may grant/revoke access.
+     */
+    private void updateUser(ProvisioningEntity entity, Boolean emailMembershipSnapshot)
             throws IdentityProvisioningException {
         Map<ClaimMapping, List<String>> attrs = entity.getAttributes();
         // Email address, aliases and the WSO2 local username are deliberately
@@ -313,7 +319,7 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
         // no supported profile, active-state or group-membership delta, return
         // before performing even a SCIM lookup. In particular, never resolve a
         // changed externalId by falling back to a mutable email address.
-        if (!forceEmailEntitlement && !hasSupportedUpdate(attrs)) {
+        if (emailMembershipSnapshot == null && !hasSupportedUpdate(attrs)) {
             log.debug("Ignoring WSO2 update with no supported Stalwart changes "
                     + "(primary email, aliases, local username and unsupported claims are not synchronized).");
             return;
@@ -328,7 +334,9 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
                 && newGroups.stream().anyMatch(this::isEmailMembershipGroup);
         if (emailMembershipAdded && findUserId(attrs, entity.getEntityName()) == null) {
             String stableId = targetUserIdentifier(attrs, entity.getEntityName());
-            request("POST", "/Users", userPayload(attrs, targetUserName(attrs, entity.getEntityName()), stableId));
+            JsonObject newUser = userPayload(attrs, targetUserName(attrs, entity.getEntityName()), stableId);
+            newUser.addProperty("active", activeClaimAllows(attrs));
+            request("POST", "/Users", newUser);
         }
         JsonObject profilePatch = userPatch(attrs, enableProfileUpdates, entity.getEntityName());
         if (profilePatch.getAsJsonArray("Operations").size() > 0) {
@@ -340,18 +348,17 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
                         "Stalwart user was not found for update; stable externalId lookup failed.");
             }
         }
-        // Compute one effective active value. Email entitlement has precedence
-        // over the independently mapped active claim, and exactly one PATCH is sent.
-        String activeClaim = mappedValue(attrs, activeClaimUri);
+        // Email membership is the mandatory authorization gate. The optional
+        // active claim can only revoke access; it cannot independently grant it.
         Boolean desiredActive = null;
-        if (StringUtils.isNotBlank(activeClaim)) {
-            boolean activeValue = parseBooleanClaim(activeClaim, activeClaimUri);
-            desiredActive = invertActiveClaim ? !activeValue : activeValue;
-        }
-        if (forceEmailEntitlement) {
-            desiredActive = true;
-        } else if (emailMembershipRemoved || emailMembershipAdded) {
-            desiredActive = !emailMembershipRemoved;
+        if (emailMembershipRemoved) {
+            desiredActive = false;
+        } else if (emailMembershipAdded) {
+            desiredActive = activeClaimAllows(attrs);
+        } else if (emailMembershipSnapshot != null) {
+            desiredActive = emailMembershipSnapshot && activeClaimAllows(attrs);
+        } else if (Boolean.FALSE.equals(activeClaimState(attrs))) {
+            desiredActive = false;
         }
         if (desiredActive != null) {
             setStalwartActive(attrs, entity.getEntityName(), desiredActive);
@@ -360,9 +367,9 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
 
     private boolean hasSupportedUpdate(Map<ClaimMapping, List<String>> attrs) {
         if (attrs == null || attrs.isEmpty()) return false;
-        return StringUtils.isNotBlank(mappedValue(attrs, givenNameClaimUri))
-                || StringUtils.isNotBlank(mappedValue(attrs, familyNameClaimUri))
-                || StringUtils.isNotBlank(mappedValue(attrs, displayNameClaimUri))
+        return mappedValue(attrs, givenNameClaimUri) != null
+                || mappedValue(attrs, familyNameClaimUri) != null
+                || mappedValue(attrs, displayNameClaimUri) != null
                 || StringUtils.isNotBlank(mappedValue(attrs, activeClaimUri))
                 || CollectionUtils.isNotEmpty(claimValues(attrs, IdentityProvisioningConstants.NEW_GROUP_CLAIM_URI))
                 || CollectionUtils.isNotEmpty(claimValues(attrs, IdentityProvisioningConstants.DELETED_GROUP_CLAIM_URI));
@@ -428,11 +435,9 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
             user.addProperty("displayName", StringUtils.defaultIfBlank(given, family).trim());
         }
         // Email aliases are intentionally not provisioned. The primary address is immutable after creation.
-        String active = mappedValue(attrs, activeClaimUri);
-        if (StringUtils.isNotBlank(active)) {
-            boolean activeValue = parseBooleanClaim(active, activeClaimUri);
-            user.addProperty("active", invertActiveClaim ? !activeValue : activeValue);
-        }
+        // Creation is always fail-closed. Callers must explicitly prove
+        // Email-group membership before changing this to true.
+        user.addProperty("active", false);
         return user;
     }
 
@@ -446,7 +451,10 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
         String given = mappedValue(attrs, givenNameClaimUri);
         String family = mappedValue(attrs, familyNameClaimUri);
         String display = mappedValue(attrs, displayNameClaimUri);
-        if (includeProfile && (StringUtils.isNotBlank(given) || StringUtils.isNotBlank(family))) {
+        if (includeProfile && display != null) {
+            // An explicitly supplied blank displayName is a clear operation.
+            addReplace(operations, "displayName", StringUtils.defaultString(display).trim());
+        } else if (includeProfile && (given != null || family != null)) {
             String lookupName = entityName;
             if (StringUtils.isNotBlank(userStoreDomainName) && StringUtils.isNotBlank(lookupName)
                     && lookupName.indexOf('/') < 0) {
@@ -455,14 +463,12 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
             try {
                 Map<String, String> snapshot = Wso2UserClaimSnapshot.read(lookupName,
                         new String[]{givenNameClaimUri, familyNameClaimUri});
-                if (!snapshot.containsKey(givenNameClaimUri) || !snapshot.containsKey(familyNameClaimUri)) {
-                    throw new IdentityProvisioningException(
-                            "The current WSO2 UserStore snapshot did not include both FIRSTNAME and LASTNAME claims.");
-                }
-                String currentGiven = snapshot.get(givenNameClaimUri);
-                String currentFamily = snapshot.get(familyNameClaimUri);
+                // A missing UserStore claim is a legitimate empty value.
+                String currentGiven = snapshot.getOrDefault(givenNameClaimUri, "");
+                String currentFamily = snapshot.getOrDefault(familyNameClaimUri, "");
                 String composed = joinName(currentGiven, currentFamily);
-                if (StringUtils.isNotBlank(composed)) addReplace(operations, "displayName", composed);
+                // Empty composed values intentionally clear Stalwart displayName.
+                addReplace(operations, "displayName", composed);
             } catch (IdentityProvisioningException e) {
                 throw e;
             } catch (Exception e) {
@@ -478,7 +484,8 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
 
     private String targetUserIdentifier(Map<ClaimMapping, List<String>> attrs, String fallback) {
         String externalId = mappedValue(attrs, externalIdClaimUri);
-        return StringUtils.isNotBlank(externalId) ? externalId : fallback;
+        String candidate = StringUtils.isNotBlank(externalId) ? externalId : fallback;
+        return StringUtils.isNotBlank(candidate) ? stripUserStoreDomain(candidate.trim()) : candidate;
     }
 
     private static String joinName(String given, String family) {
