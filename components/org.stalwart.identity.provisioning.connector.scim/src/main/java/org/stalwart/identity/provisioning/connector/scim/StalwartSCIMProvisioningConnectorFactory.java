@@ -63,13 +63,13 @@ public class StalwartSCIMProvisioningConnectorFactory extends AbstractProvisioni
             properties.add(property(StalwartSCIMProvisioningConnectorConstants.MAX_CONCURRENT_REQUESTS,
                     "Maximum Concurrent SCIM Requests (1-64)", "8", false, false, 12));
             properties.add(property(StalwartSCIMProvisioningConnectorConstants.ACTIVE_CLAIM_URI,
-                    "active source WSO2 local Boolean claim URI (optional)", "", false, false, 13));
+                    "Optional WSO2 Boolean claim; false disables access, true alone never grants Email entitlement", "", false, false, 13));
             Property invertActive = property(StalwartSCIMProvisioningConnectorConstants.INVERT_ACTIVE_CLAIM,
                     "Invert active source value (for accountDisabled)", "false", false, false, 14);
             invertActive.setType("boolean");
             properties.add(invertActive);
             properties.add(property(StalwartSCIMProvisioningConnectorConstants.EMAIL_MEMBERSHIP_GROUP,
-                    "WSO2 group that grants email access", "Email", false, false, 15));
+                    "Mandatory WSO2 group membership required for Stalwart email access", "Email", false, false, 15));
             Property mode = property(StalwartSCIMProvisioningConnectorConstants.PROVISIONING_MODE,
                     "Provisioning Mode (INDIVIDUAL or BULK)", "INDIVIDUAL", false, false, 16);
             mode.setDescription("INDIVIDUAL sends each SCIM mutation synchronously. BULK briefly aggregates concurrent mutations in memory (150 ms or up to 100 operations), sends one SCIM Bulk request, and waits for each operation result. No persistent queue, database table, scheduler or background retry is used. Primary email, aliases and WSO2 local username changes are never synchronized.");
