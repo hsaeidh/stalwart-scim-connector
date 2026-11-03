@@ -16,7 +16,7 @@
 - بدون ساخت یا همگام‌سازی Group در Stalwart؛
 - بدون SCIM DELETE برای حذف کاربر؛ حذف WSO2 به PATCH با `active=false` تبدیل می‌شود؛
 - نام کاربری Stalwart از Claim ایمیل در زمان ایجاد گرفته می‌شود؛ `externalId` شناسه پایدار WSO2 است؛
-- در Update، `userName` و `externalId` تغییر داده نمی‌شوند؛
+- در Update، `userName` و `externalId` تغییر داده نمی‌شوند؛ شناسایی حساب موجود فقط با `externalId` پایدار انجام می‌شود و ایمیل برای پیدا کردن یا تصاحب حساب جایگزین آن نمی‌شود؛
 - تغییر FIRSTNAME یا LASTNAME یا DISPLAYNAME باعث محاسبه و ارسال displayName می‌شود؛
 - تغییر ایمیل اصلی، Alias یا username داخلی WSO2 به Stalwart ارسال نمی‌شود.
 
