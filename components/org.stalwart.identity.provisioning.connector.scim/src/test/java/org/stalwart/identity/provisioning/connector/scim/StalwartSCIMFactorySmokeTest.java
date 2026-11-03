@@ -5,6 +5,8 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.sun.net.httpserver.HttpServer;
 import org.wso2.carbon.identity.application.common.model.Property;
+import org.wso2.carbon.identity.application.common.model.ClaimMapping;
+import org.wso2.carbon.identity.provisioning.IdentityProvisioningConstants;
 import org.wso2.carbon.identity.provisioning.ProvisioningEntity;
 import org.wso2.carbon.identity.provisioning.ProvisioningEntityType;
 import org.wso2.carbon.identity.provisioning.ProvisioningOperation;
@@ -32,8 +34,11 @@ public final class StalwartSCIMFactorySmokeTest {
         }
         assertTomlConfiguration();
         assertBulkMicroBatch();
+        assertCreateRequiresEmailGroup();
+        assertGroupDeltaControlsAccess();
+        assertProfileDisplayNameCanBeCleared();
         assertDeleteDisablesAccount();
-        System.out.println("SMOKE TEST PASSED v2.0.6");
+        System.out.println("SMOKE TEST PASSED v2.0.7");
     }
 
     private static void assertTomlConfiguration() throws Exception {
@@ -62,6 +67,149 @@ public final class StalwartSCIMFactorySmokeTest {
         } finally {
             if (previous == null) System.clearProperty("carbon.home");
             else System.setProperty("carbon.home", previous);
+        }
+    }
+
+
+    private static Map<ClaimMapping, List<String>> claims(String... pairs) {
+        Map<ClaimMapping, List<String>> attributes = new java.util.HashMap<>();
+        for (int i = 0; i < pairs.length; i += 2) {
+            ClaimMapping mapping = ClaimMapping.build(pairs[i], pairs[i], null, false);
+            attributes.put(mapping, List.of(pairs[i + 1]));
+        }
+        return attributes;
+    }
+
+    private static void assertCreateRequiresEmailGroup() throws Exception {
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        List<JsonObject> creates = new java.util.concurrent.CopyOnWriteArrayList<>();
+        AtomicReference<String> searchMethod = new AtomicReference<>();
+        server.createContext("/scim/v2", exchange -> {
+            String path = exchange.getRequestURI().getPath();
+            if (path.endsWith("/.search")) {
+                searchMethod.set(exchange.getRequestMethod());
+                JsonObject empty = new JsonObject();
+                empty.addProperty("totalResults", 0);
+                empty.add("Resources", new JsonArray());
+                byte[] bytes = empty.toString().getBytes(StandardCharsets.UTF_8);
+                exchange.sendResponseHeaders(200, bytes.length);
+                try (var out = exchange.getResponseBody()) { out.write(bytes); }
+                return;
+            }
+            if ("POST".equals(exchange.getRequestMethod()) && "/scim/v2/Users".equals(path)) {
+                JsonObject body = JsonParser.parseString(new String(exchange.getRequestBody().readAllBytes(),
+                        StandardCharsets.UTF_8)).getAsJsonObject();
+                creates.add(body);
+                JsonObject response = new JsonObject();
+                response.addProperty("id", "created-" + creates.size());
+                byte[] bytes = response.toString().getBytes(StandardCharsets.UTF_8);
+                exchange.sendResponseHeaders(201, bytes.length);
+                try (var out = exchange.getResponseBody()) { out.write(bytes); }
+                return;
+            }
+            exchange.sendResponseHeaders(404, -1);
+            exchange.close();
+        });
+        server.start();
+        try {
+            String base = "http://127.0.0.1:" + server.getAddress().getPort() + "/scim/v2";
+            StalwartSCIMProvisioningConnector connector = newConnector(base, "INDIVIDUAL",
+                    "http://wso2.org/claims/accountEnabled");
+            Map<ClaimMapping, List<String>> withoutGroup = claims(
+                    "http://wso2.org/claims/emailaddress", "no-group@example.test",
+                    "http://wso2.org/claims/username", "stable-no-group",
+                    "http://wso2.org/claims/accountEnabled", "true");
+            connector.provision(new ProvisioningEntity(ProvisioningEntityType.USER, "stable-no-group",
+                    ProvisioningOperation.POST, withoutGroup));
+            if (creates.size() != 1 || creates.get(0).get("active").getAsBoolean()) {
+                throw new IllegalStateException("An active claim must not activate a user outside the Email group.");
+            }
+            if (!"POST".equals(searchMethod.get())) {
+                throw new IllegalStateException("SCIM lookup must use POST .search, not a URL filter.");
+            }
+
+            Map<ClaimMapping, List<String>> withGroup = claims(
+                    "http://wso2.org/claims/emailaddress", "member@example.test",
+                    "http://wso2.org/claims/username", "stable-member",
+                    "http://wso2.org/claims/accountEnabled", "true",
+                    IdentityProvisioningConstants.GROUP_CLAIM_URI, "Email");
+            connector.provision(new ProvisioningEntity(ProvisioningEntityType.USER, "stable-member",
+                    ProvisioningOperation.POST, withGroup));
+            if (creates.size() != 2 || !creates.get(1).get("active").getAsBoolean()) {
+                throw new IllegalStateException("A user with Email membership and an allowing active claim should be active.");
+            }
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    private static void assertGroupDeltaControlsAccess() throws Exception {
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        List<JsonObject> patches = new java.util.concurrent.CopyOnWriteArrayList<>();
+        server.createContext("/scim/v2", exchange -> {
+            String path = exchange.getRequestURI().getPath();
+            if ("POST".equals(exchange.getRequestMethod()) && path.endsWith("/.search")) {
+                JsonObject user = new JsonObject();
+                user.addProperty("id", "existing-user");
+                JsonArray resources = new JsonArray();
+                resources.add(user);
+                JsonObject response = new JsonObject();
+                response.addProperty("totalResults", 1);
+                response.add("Resources", resources);
+                byte[] bytes = response.toString().getBytes(StandardCharsets.UTF_8);
+                exchange.sendResponseHeaders(200, bytes.length);
+                try (var out = exchange.getResponseBody()) { out.write(bytes); }
+                return;
+            }
+            if ("PATCH".equals(exchange.getRequestMethod())) {
+                patches.add(JsonParser.parseString(new String(exchange.getRequestBody().readAllBytes(),
+                        StandardCharsets.UTF_8)).getAsJsonObject());
+                exchange.sendResponseHeaders(204, -1);
+                exchange.close();
+                return;
+            }
+            exchange.sendResponseHeaders(404, -1);
+            exchange.close();
+        });
+        server.start();
+        try {
+            String base = "http://127.0.0.1:" + server.getAddress().getPort() + "/scim/v2";
+            StalwartSCIMProvisioningConnector connector = newConnector(base, "INDIVIDUAL");
+            Map<ClaimMapping, List<String>> add = claims(
+                    "http://wso2.org/claims/username", "stable-existing",
+                    IdentityProvisioningConstants.NEW_GROUP_CLAIM_URI, "Email");
+            connector.provision(new ProvisioningEntity(ProvisioningEntityType.USER, "stable-existing",
+                    ProvisioningOperation.PATCH, add));
+            Map<ClaimMapping, List<String>> remove = claims(
+                    "http://wso2.org/claims/username", "stable-existing",
+                    IdentityProvisioningConstants.DELETED_GROUP_CLAIM_URI, "Email");
+            connector.provision(new ProvisioningEntity(ProvisioningEntityType.USER, "stable-existing",
+                    ProvisioningOperation.PATCH, remove));
+            if (patches.size() != 2
+                    || !patches.get(0).getAsJsonArray("Operations").get(0).getAsJsonObject()
+                    .get("value").getAsBoolean()
+                    || patches.get(1).getAsJsonArray("Operations").get(0).getAsJsonObject()
+                    .get("value").getAsBoolean()) {
+                throw new IllegalStateException("Email group add/remove must enable/disable Stalwart access.");
+            }
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    private static void assertProfileDisplayNameCanBeCleared() throws Exception {
+        StalwartSCIMProvisioningConnector connector = newConnector(
+                "http://127.0.0.1:18080/scim/v2", "INDIVIDUAL");
+        Map<ClaimMapping, List<String>> attributes =
+                claims("http://wso2.org/claims/displayname", "");
+        Method method = StalwartSCIMProvisioningConnector.class.getDeclaredMethod(
+                "userPatch", Map.class, boolean.class, String.class);
+        method.setAccessible(true);
+        JsonObject patch = (JsonObject) method.invoke(connector, attributes, true, "stable-user");
+        JsonObject operation = patch.getAsJsonArray("Operations").get(0).getAsJsonObject();
+        if (!"displayName".equals(operation.get("path").getAsString())
+                || !operation.get("value").getAsString().isEmpty()) {
+            throw new IllegalStateException("An explicitly empty displayName must clear the Stalwart value.");
         }
     }
 
@@ -134,7 +282,7 @@ public final class StalwartSCIMFactorySmokeTest {
         AtomicReference<JsonObject> patch = new AtomicReference<>();
         server.createContext("/scim/v2/Users", exchange -> {
             String path = exchange.getRequestURI().getPath();
-            if ("GET".equals(exchange.getRequestMethod()) && "/scim/v2/Users".equals(path)) {
+            if ("POST".equals(exchange.getRequestMethod()) && "/scim/v2/Users/.search".equals(path)) {
                 JsonObject user = new JsonObject();
                 user.addProperty("id", "user-1");
                 user.addProperty("externalId", "123");
@@ -167,11 +315,23 @@ public final class StalwartSCIMFactorySmokeTest {
     }
 
     private static StalwartSCIMProvisioningConnector newConnector(String base, String mode) throws Exception {
+        return newConnector(base, mode, null);
+    }
+
+    private static StalwartSCIMProvisioningConnector newConnector(String base, String mode, String activeClaimUri)
+            throws Exception {
         Property url = new Property(); url.setName(StalwartSCIMProvisioningConnectorConstants.BASE_URL); url.setValue(base);
         Property token = new Property(); token.setName(StalwartSCIMProvisioningConnectorConstants.BEARER_TOKEN); token.setValue("smoke-token");
         Property provisioningMode = new Property(); provisioningMode.setName(StalwartSCIMProvisioningConnectorConstants.PROVISIONING_MODE); provisioningMode.setValue(mode);
         StalwartSCIMProvisioningConnector connector = new StalwartSCIMProvisioningConnector();
-        connector.init(new Property[]{url, token, provisioningMode});
+        if (activeClaimUri != null) {
+            Property active = new Property();
+            active.setName(StalwartSCIMProvisioningConnectorConstants.ACTIVE_CLAIM_URI);
+            active.setValue(activeClaimUri);
+            connector.init(new Property[]{url, token, provisioningMode, active});
+        } else {
+            connector.init(new Property[]{url, token, provisioningMode});
+        }
         return connector;
     }
 }
