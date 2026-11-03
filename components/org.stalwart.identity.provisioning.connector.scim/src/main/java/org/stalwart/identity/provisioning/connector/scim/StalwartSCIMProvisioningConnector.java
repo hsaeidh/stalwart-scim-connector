@@ -37,15 +37,12 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * WSO2 outbound provisioning connector that speaks SCIM 2.0 directly to Stalwart.
@@ -604,11 +601,23 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
         return id;
     }
 
+    private String tokenFingerprint(String token) {
+        try {
+            byte[] digest = java.security.MessageDigest.getInstance("SHA-256")
+                    .digest(StringUtils.defaultString(token).getBytes(StandardCharsets.UTF_8));
+            StringBuilder value = new StringBuilder();
+            for (byte b : digest) value.append(String.format("%02x", b));
+            return value.toString();
+        } catch (java.security.NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 is required for credential-scoped batch keys.", e);
+        }
+    }
+
     private String cacheKey(String resource, String attribute, String value) {
         // Different provisioning principals can see different tenant-scoped IDs
         // even when they share the same SCIM host.
         return baseUrl + "|" + String.valueOf(userStoreDomainName) + "|"
-                + Integer.toHexString(StringUtils.defaultString(bearerToken).hashCode()) + "|"
+                + tokenFingerprint(bearerToken) + "|"
                 + resource + "|" + attribute + "|" + value.trim().toLowerCase(java.util.Locale.ROOT);
     }
 
@@ -676,7 +685,7 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
             if (bulkFallbackToIndividual) return requestAtIndividual(endpointBaseUrl, method, path, body);
             throw new IdentityProvisioningException("Stalwart SCIM Bulk endpoint is unavailable.");
         }
-        String key = endpointBaseUrl + "|" + Integer.toHexString(bearerToken.hashCode());
+        String key = endpointBaseUrl + "|" + tokenFingerprint(bearerToken);
         PendingBulkOperation pending = new PendingBulkOperation(this, endpointBaseUrl, method, path, body);
         BulkBatch batch = BULK_BATCHES.computeIfAbsent(key, ignored -> new BulkBatch());
         synchronized (batch) {
@@ -805,8 +814,13 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
                     item.result.complete(resource);
                 } else if (status == 404 && "DELETE".equalsIgnoreCase(item.method)) {
                     item.result.complete(new JsonObject());
-                } else if (status == 409 && "POST".equalsIgnoreCase(item.method) && postResourceNowExists(item.path, item.body)) {
-                    item.result.complete(new JsonObject());
+                } else if (status == 409 && "POST".equalsIgnoreCase(item.method)) {
+                    try {
+                        if (postResourceNowExists(item.path, item.body)) item.result.complete(new JsonObject());
+                        else item.result.completeExceptionally(new IdentityProvisioningException("Stalwart returned a POST conflict without a matching externalId."));
+                    } catch (IdentityProvisioningException reconcileError) {
+                        item.result.completeExceptionally(reconcileError);
+                    }
                 } else {
                     item.result.completeExceptionally(new IdentityProvisioningException(
                             "Stalwart SCIM Bulk operation failed with HTTP " + status + "."));

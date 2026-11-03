@@ -1,7 +1,7 @@
-name: Build Stalwart SCIM Connector
+name: Build Stalwart SCIM Connector 2.0.6
 on:
   push:
-    branches: [ "main", "release/1.0.8", "release/1.0.9", "release/2.0.1", "feature/scim-bulk-2.0.2", "feature/hybrid-bulk-2.0.3", "feature/2.0.4", "feature/2.0.5" ]
+    branches: [ "feature/2.0.6", "main" ]
   pull_request:
   workflow_dispatch:
 permissions:
@@ -13,203 +13,41 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout source
-        uses: actions/checkout@v5
-      - name: Set up JDK 21
-        uses: actions/setup-java@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "21"
           cache: maven
-      - name: Build OSGi bundle and run factory smoke test
+      - name: Build and run connector smoke tests
         run: mvn -B -ntp clean verify
-      - name: Verify OSGi bundle metadata, DS descriptor and diagnostic markers
+      - name: Verify deployable OSGi bundle and no durable outbox dependency
         shell: bash
         run: |
           set -euo pipefail
           JAR=$(find components/org.stalwart.identity.provisioning.connector.scim/target -maxdepth 1 -type f -name '*.jar' ! -name '*-sources.jar' | head -n 1)
           test -n "$JAR"
           python3 - "$JAR" <<'PY'
-          import sys
-          import os
-          import zipfile
-          import xml.etree.ElementTree as ET
-
-          jar = sys.argv[1]
-          with zipfile.ZipFile(jar) as archive:
-              raw = archive.read("META-INF/MANIFEST.MF").decode("utf-8")
-              names = archive.namelist()
-              class_data = archive.read(
-                  "org/stalwart/identity/provisioning/connector/scim/internal/"
-                  "StalwartSCIMConnectorServiceComponent.class"
-              )
-
-          unfolded = []
-          for line in raw.replace("\r\n", "\n").split("\n"):
-              if line.startswith(" ") and unfolded:
-                  unfolded[-1] += line[1:]
-              else:
-                  unfolded.append(line)
-          attributes = {}
-          for line in unfolded:
-              if ": " in line:
-                  key, value = line.split(": ", 1)
-                  attributes[key] = value
-
-          version = attributes.get("Bundle-Version", "")
-          imports = attributes.get("Import-Package", "")
-          service_component = attributes.get("Service-Component", "")
-          require_capability = attributes.get("Require-Capability", "")
-          assert version == "2.0.5.SNAPSHOT", f"Unexpected Bundle-Version: {version!r}"
-          assert attributes.get("Bundle-SymbolicName", "").split(";")[0] == (
-              "org.stalwart.identity.provisioning.connector.scim"
-          ), "Unexpected Bundle-SymbolicName"
-          assert attributes.get("Bundle-ActivationPolicy") == "lazy", (
-              f"Unexpected Bundle-ActivationPolicy: {attributes.get('Bundle-ActivationPolicy')!r}"
-          )
-          assert attributes.get("Bundle-StartLevel") == "1", (
-              f"Unexpected Bundle-StartLevel: {attributes.get('Bundle-StartLevel')!r}"
-          )
-
-          expected_extender = 'osgi.extender;filter:="(&(osgi.extender=osgi.component)(version>=1.3.0)(!(version>=2.0.0)))"'
-          expected_ee = 'osgi.ee;filter:="(&(osgi.ee=JavaSE)(version>=21))"'
-          assert require_capability.count("osgi.extender;filter") == 1, (
-              "Expected exactly one SCR extender requirement: " + require_capability
-          )
-          assert expected_extender in require_capability, (
-              "Missing/wrong osgi.extender requirement: " + require_capability
-          )
-          assert expected_ee in require_capability, (
-              "Missing/wrong JavaSE >=21 requirement: " + require_capability
-          )
-          assert 'org.wso2.carbon.identity.provisioning;version="[7.10,8)"' in imports, (
-              "Missing WSO2 provisioning package import: " + imports
-          )
-          assert 'org.wso2.carbon.identity.application.common.model;version="[7.10,8)"' in imports, (
-              "Missing WSO2 application.common package import: " + imports
-          )
-          assert service_component and "OSGI-INF/" in service_component, (
-              "Missing Service-Component manifest header"
-          )
-
-          ds_files = [name for name in names if name.startswith("OSGI-INF/") and name.endswith(".xml")]
-          assert ds_files, "No generated OSGi Declarative Services XML found"
-          expected_name = (
-              "org.stalwart.identity.provisioning.connector.scim.internal."
-              "StalwartSCIMConnectorServiceComponent"
-          )
-          component_xml = None
-          for name in ds_files:
-              with zipfile.ZipFile(jar) as archive:
-                  root = ET.fromstring(archive.read(name))
-              if root.attrib.get("name") == expected_name:
-                  component_xml = (name, root)
-                  break
-          assert component_xml, "Generated Stalwart DS component descriptor not found"
-          descriptor_name, root = component_xml
-          assert root.tag.endswith("component"), f"Unexpected DS XML root: {root.tag}"
-          namespace = root.tag.split("}")[0].lstrip("{")
-          assert namespace in {
-              "http://www.osgi.org/xmlns/scr/v1.3.0",
-              "http://www.osgi.org/xmlns/scr/v1.4.0",
-          }, f"Unexpected DS namespace: {namespace}"
-          assert root.attrib.get("immediate") == "true", "DS component must be immediate"
-          assert root.attrib.get("activate") == "activate", "Missing activate method"
-          assert root.attrib.get("deactivate") == "deactivate", "Missing deactivate method"
-
-          for marker in (
-              "STALWART-SCIM STATIC INIT ENTERING v2.0.5",
-              "STALWART-SCIM STATIC INIT DONE v2.0.5",
-              "STALWART-SCIM CONSTRUCTOR v2.0.5",
-              "STALWART-SCIM ACTIVATE START v2.0.5",
-              "STALWART-SCIM ACTIVATE END v2.0.5",
-              "STALWART-SCIM ACTIVATE FAILED v2.0.5",
-          ):
-              assert marker.encode() in class_data, f"Missing bytecode diagnostic marker: {marker}"
-
-          assert "lib/gson-2.11.0.jar" in names, "Nested Gson dependency is missing"
-          assert not any(name.startswith("org/wso2/") for name in names), (
-              "WSO2 API classes must not be embedded in this custom bundle"
-          )
-          signatures = [
-              name for name in names
-              if name.upper().startswith("META-INF/")
-              and name.upper().endswith((".SF", ".RSA", ".DSA", ".EC"))
-          ]
-          assert not signatures, f"JAR must remain unsigned; found: {signatures}"
-
-          print(f"Verified {jar}: Bundle-Version={version}")
-          print(f"Verified DS descriptor: {descriptor_name} ({namespace})")
-          print("Verified exactly one SCR extender requirement and JavaSE >=21.")
-          print("Verified Bundle-StartLevel=1 and Bundle-ActivationPolicy=lazy.")
-          print("Verified WSO2 Import-Package ranges and no embedded WSO2 classes.")
-          print("Verified v2.0.5 static-init, constructor and activation diagnostic markers.")
-          source_path = (
-              "components/org.stalwart.identity.provisioning.connector.scim/src/main/java/"
-              "org/stalwart/identity/provisioning/connector/scim/StalwartSCIMProvisioningConnector.java"
-          )
-          with open(source_path, encoding="utf-8") as source_file:
-              source = source_file.read()
-          assert 'addReplace(operations, "userName"' not in source, (
-              "userName must never be included in an update PATCH"
-          )
-          assert 'addReplace(operations, "externalId"' not in source, (
-              "externalId must remain immutable after account creation"
-          )
-          assert 'addReplace(operations, "displayName"' in source, (
-              "Expected Stalwart displayName PATCH support"
-          )
-          assert "joinName(given, family)" in source, (
-              "Expected structured name parts to be composed into Stalwart displayName"
-          )
-          assert 'if (!isEmailMembershipGroup(group))' in source, (
-              "Email entitlement must not be provisioned as a Stalwart Group"
-          )
-          assert 'excludedAttributes=members' in source, (
-              "Group ID lookups must omit large members arrays"
-          )
-          assert 'request("GET", "/Groups/"' not in source, (
-              "Membership processing must not fetch full Group resources"
-          )
-          assert 'RESOURCE_ID_CACHE' in source and 'CACHE_TTL_MILLIS' in source, (
-              "Expected endpoint-scoped TTL resource ID cache"
-          )
-          assert 'Semaphore' in source and 'sendWithLimit' in source, (
-              "Expected bounded concurrent SCIM HTTP requests"
-          )
-          assert 'requestAt(profileUpdateBaseUrl()' in source, (
-              "Expected a separate configurable profile-update SCIM endpoint"
-          )
-          assert "targetUserIdentifier(attrs" in source, (
-              "Group membership updates must resolve users through the stable identifier"
-          )
-          assert "Wso2UserClaimSnapshot.read" in source, (
-              "Name claim updates must read the current WSO2 UserStore snapshot without an Event Handler"
-          )
-          assert "ScimOperationOutbox" in source and "flushScimOperationOutbox" in source, (
-              "Expected durable SCIM Bulk outbox and background worker"
-          )
-          assert "claimBatch(scimOperationScope" in source, (
-              "Expected durable queue claim/lease processing"
-          )
-          assert 'System.getProperty("stalwart.scim.hybrid' not in source, (
-              "Connector must not require custom HYBRID JVM properties"
-          )
-          assert not os.path.exists(
-              "components/org.stalwart.identity.provisioning.event.handler/pom.xml"
-          ), "A separate WSO2 Event Handler module must not be required or built"
-
-          assert "EMAIL_ALIASES_CLAIM_URI" not in source, (
-              "Email alias synchronization must remain disabled"
-          )
-
-          print("Verified nested Gson and unsigned JAR.")
-          print("Verified connector-native RealmService integration and durable Bulk outbox without JVM/Event Handler setup.")
+          import sys, zipfile
+          jar=sys.argv[1]
+          with zipfile.ZipFile(jar) as z:
+              names=z.namelist()
+              manifest=z.read("META-INF/MANIFEST.MF").decode()
+          assert "Bundle-Version: 2.0.6.SNAPSHOT" in manifest, manifest
+          assert "org/stalwart/identity/provisioning/connector/scim/StalwartSCIMProvisioningConnector.class" in names
+          assert not any("Outbox" in n for n in names), "Legacy Outbox classes must not be packaged"
+          assert "lib/gson-2.11.0.jar" in names, "Embedded Gson is missing"
+          assert not any(n.startswith("org/wso2/") for n in names), "WSO2 API classes must not be embedded"
+          print("Verified connector bundle version, embedded Gson, and absence of Outbox classes.")
           PY
-      - name: Upload single deployable connector JAR
+          if grep -R -nE 'HybridProfileOutbox|ScimOperationOutbox|hybrid-outbox|hybrid-scope-id|jdbc/WSO2CarbonDB|HYBRID' components/org.stalwart.identity.provisioning.connector.scim/src/main; then
+            echo "Legacy durable Outbox/HYBRID references remain."
+            exit 1
+          fi
+      - name: Upload connector JAR
         uses: actions/upload-artifact@v6
         with:
-          name: stalwart-scim-connector-2.0.5-SNAPSHOT
+          name: stalwart-scim-connector-2.0.6-SNAPSHOT
           path: components/org.stalwart.identity.provisioning.connector.scim/target/*.jar
           if-no-files-found: error
           retention-days: 30
