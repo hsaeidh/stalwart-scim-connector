@@ -44,6 +44,7 @@ public final class StalwartSCIMFactorySmokeTest {
         assertAbsentAndEmptyGroupClaimsDiffer();
         assertGroupDeltaControlsAccess();
         assertAuthoritativeGroupSnapshotOverridesDelta();
+        assertGroupAddLoadsMissingEmailFromUserStore();
         assertBulkRetriesOnlyFailedOperation();
         assertProfileDisplayNameCanBeCleared();
         assertIdentityClaimsAreNotUpdated();
@@ -621,6 +622,88 @@ public final class StalwartSCIMFactorySmokeTest {
                 throw new IllegalStateException("Bulk partial failure must retry only the transiently failed safe operation.");
             }
         } finally {
+            server.stop(0);
+        }
+    }
+
+
+    private static void assertGroupAddLoadsMissingEmailFromUserStore() throws Exception {
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        AtomicReference<JsonObject> created = new AtomicReference<>();
+        AtomicReference<JsonObject> activePatch = new AtomicReference<>();
+        server.createContext("/scim/v2", exchange -> {
+            String path = exchange.getRequestURI().getPath();
+            if ("POST".equals(exchange.getRequestMethod()) && path.endsWith("/.search")) {
+                JsonObject empty = new JsonObject();
+                empty.addProperty("totalResults", 0);
+                empty.add("Resources", new JsonArray());
+                byte[] bytes = empty.toString().getBytes(StandardCharsets.UTF_8);
+                exchange.sendResponseHeaders(200, bytes.length);
+                try (var out = exchange.getResponseBody()) { out.write(bytes); }
+                return;
+            }
+            if ("POST".equals(exchange.getRequestMethod()) && "/scim/v2/Users".equals(path)) {
+                created.set(JsonParser.parseString(new String(exchange.getRequestBody().readAllBytes(),
+                        StandardCharsets.UTF_8)).getAsJsonObject());
+                JsonObject response = new JsonObject();
+                response.addProperty("id", "created-from-group-delta");
+                byte[] bytes = response.toString().getBytes(StandardCharsets.UTF_8);
+                exchange.sendResponseHeaders(201, bytes.length);
+                try (var out = exchange.getResponseBody()) { out.write(bytes); }
+                return;
+            }
+            if ("PATCH".equals(exchange.getRequestMethod()) && path.endsWith("/created-from-group-delta")) {
+                activePatch.set(JsonParser.parseString(new String(exchange.getRequestBody().readAllBytes(),
+                        StandardCharsets.UTF_8)).getAsJsonObject());
+                exchange.sendResponseHeaders(204, -1);
+                exchange.close();
+                return;
+            }
+            exchange.sendResponseHeaders(404, -1);
+            exchange.close();
+        });
+        server.start();
+        Object serviceProxy = null;
+        try {
+            Map<String, String> currentClaims = Map.of(
+                    "http://wso2.org/claims/emailaddress", "from-store@example.test",
+                    "http://wso2.org/claims/givenname", "StoreFirst",
+                    "http://wso2.org/claims/lastname", "StoreLast",
+                    "http://wso2.org/claims/displayname", "Store Display");
+            Object managerProxy = java.lang.reflect.Proxy.newProxyInstance(
+                    org.wso2.carbon.user.api.UserStoreManager.class.getClassLoader(),
+                    new Class[]{org.wso2.carbon.user.api.UserStoreManager.class},
+                    (proxy, method, args) -> "getUserClaimValues".equals(method.getName()) ? currentClaims : null);
+            Object realmProxy = java.lang.reflect.Proxy.newProxyInstance(
+                    org.wso2.carbon.user.api.UserRealm.class.getClassLoader(),
+                    new Class[]{org.wso2.carbon.user.api.UserRealm.class},
+                    (proxy, method, args) -> "getUserStoreManager".equals(method.getName()) ? managerProxy : null);
+            serviceProxy = java.lang.reflect.Proxy.newProxyInstance(
+                    org.wso2.carbon.user.core.service.RealmService.class.getClassLoader(),
+                    new Class[]{org.wso2.carbon.user.core.service.RealmService.class},
+                    (proxy, method, args) -> "getTenantUserRealm".equals(method.getName()) ? realmProxy : null);
+            Wso2UserClaimSnapshot.bind((org.wso2.carbon.user.core.service.RealmService) serviceProxy);
+            PrivilegedCarbonContext.getThreadLocalCarbonContext().setTenantId(1);
+            String base = "http://127.0.0.1:" + server.getAddress().getPort() + "/scim/v2";
+            StalwartSCIMProvisioningConnector connector = newConnector(base, "INDIVIDUAL");
+            Map<ClaimMapping, List<String>> attributes = new java.util.HashMap<>(claims(
+                    "http://wso2.org/claims/username", "stable-group-add-user"));
+            attributes.put(ClaimMapping.build(IdentityProvisioningConstants.NEW_GROUP_CLAIM_URI,
+                    IdentityProvisioningConstants.NEW_GROUP_CLAIM_URI, null, false), List.of("Email"));
+            connector.provision(new ProvisioningEntity(ProvisioningEntityType.USER,
+                    "stable-group-add-user", ProvisioningOperation.PATCH, attributes));
+            if (created.get() == null
+                    || !"from-store@example.test".equals(created.get().get("userName").getAsString())
+                    || !"stable-group-add-user".equals(created.get().get("externalId").getAsString())
+                    || !"Store Display".equals(created.get().get("displayName").getAsString())
+                    || !created.get().get("active").getAsBoolean()
+                    || activePatch.get() == null) {
+                throw new IllegalStateException("Group Add must load missing email/profile claims from the active WSO2 UserStore.");
+            }
+        } finally {
+            if (serviceProxy != null) {
+                Wso2UserClaimSnapshot.unbind((org.wso2.carbon.user.core.service.RealmService) serviceProxy);
+            }
             server.stop(0);
         }
     }
