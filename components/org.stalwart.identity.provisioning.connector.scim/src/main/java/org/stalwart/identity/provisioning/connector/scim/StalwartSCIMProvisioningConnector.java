@@ -493,8 +493,13 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
 
     private String targetUserIdentifier(Map<ClaimMapping, List<String>> attrs, String fallback) {
         String externalId = mappedValue(attrs, externalIdClaimUri);
-        String candidate = StringUtils.isNotBlank(externalId) ? externalId : fallback;
-        return StringUtils.isNotBlank(candidate) ? stripUserStoreDomain(candidate.trim()) : candidate;
+        if (StringUtils.isNotBlank(externalId)) {
+            return stripUserStoreDomain(externalId.trim());
+        }
+        // The entity name is only a fallback when it is a stable local username,
+        // never when it is the mutable primary email address.
+        if (StringUtils.isBlank(fallback) || fallback.indexOf('@') >= 0) return null;
+        return stripUserStoreDomain(fallback.trim());
     }
 
     private static String joinName(String given, String family) {
