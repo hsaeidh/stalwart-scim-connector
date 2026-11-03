@@ -556,20 +556,9 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
         if (StringUtils.isNotBlank(externalId)) {
             return findResourceId("Users", "externalId", externalId);
         }
-        // Email lookup is a legacy fallback only when no stable local identifier
-        // is available; numeric/bare WSO2 usernames are never treated as email.
-        String userName = mappedValue(attrs, userNameClaimUri);
-        if (StringUtils.isBlank(userName) && StringUtils.isNotBlank(fallback)
-                && fallback.trim().contains("@")) {
-            userName = fallback.trim();
-        }
-        if (StringUtils.isBlank(userName)) return null;
-        userName = userName.trim();
-        if (!userName.matches("^[^\\s@]+@[^\\s@]+$")) {
-            throw new IdentityProvisioningException(
-                    "Stalwart SCIM userName fallback must be a full email address.");
-        }
-        return findResourceId("Users", "userName", userName);
+        // Never resolve an update by mutable email. If the immutable externalId
+        // is unavailable, fail closed rather than risk adopting another account.
+        return null;
     }
 
     private String findUserIdByIdentifier(String identifier) throws IdentityProvisioningException {
