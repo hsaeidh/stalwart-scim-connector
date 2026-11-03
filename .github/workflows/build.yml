@@ -1,7 +1,7 @@
-name: Build Stalwart SCIM Connector 2.0.6
+name: Build Stalwart SCIM Connector 2.0.7
 on:
   push:
-    branches: [ "feature/2.0.6", "main" ]
+    branches: [ "feature/2.0.7", "main" ]
   pull_request:
   workflow_dispatch:
 permissions:
@@ -35,7 +35,7 @@ jobs:
           with zipfile.ZipFile(jar) as z:
               names=z.namelist()
               manifest=z.read("META-INF/MANIFEST.MF").decode()
-          assert "Bundle-Version: 2.0.6.SNAPSHOT" in manifest, manifest
+          assert "Bundle-Version: 2.0.7.SNAPSHOT" in manifest, manifest
           assert "org/stalwart/identity/provisioning/connector/scim/StalwartSCIMProvisioningConnector.class" in names
           assert not any("Outbox" in n for n in names), "Legacy Outbox classes must not be packaged"
           assert "lib/gson-2.11.0.jar" in names, "Embedded Gson is missing"
@@ -50,7 +50,7 @@ jobs:
       - name: Upload connector JAR
         uses: actions/upload-artifact@v6
         with:
-          name: stalwart-scim-connector-2.0.6-SNAPSHOT
+          name: stalwart-scim-connector-2.0.7-SNAPSHOT
           path: components/org.stalwart.identity.provisioning.connector.scim/target/*.jar
           if-no-files-found: error
           retention-days: 30
