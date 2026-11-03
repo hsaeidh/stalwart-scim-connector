@@ -39,6 +39,8 @@ public final class StalwartSCIMFactorySmokeTest {
         assertGroupDeltaControlsAccess();
         assertProfileDisplayNameCanBeCleared();
         assertIdentityClaimsAreNotUpdated();
+        assertProfileUpdateCannotChangeOrigin();
+        assertNameCompositionAllowsMissingParts();
         assertDeleteDisablesAccount();
         System.out.println("SMOKE TEST PASSED v2.0.7");
     }
@@ -346,6 +348,36 @@ public final class StalwartSCIMFactorySmokeTest {
         method.setAccessible(true);
         if ((Boolean) method.invoke(connector, attributes)) {
             throw new IllegalStateException("Email, alias and local identity changes must not trigger Stalwart updates.");
+        }
+    }
+
+
+    private static void assertProfileUpdateCannotChangeOrigin() throws Exception {
+        Property url = new Property();
+        url.setName(StalwartSCIMProvisioningConnectorConstants.BASE_URL);
+        url.setValue("https://mail.example.test/scim/v2");
+        Property token = new Property();
+        token.setName(StalwartSCIMProvisioningConnectorConstants.BEARER_TOKEN);
+        token.setValue("smoke-token");
+        Property profile = new Property();
+        profile.setName(StalwartSCIMProvisioningConnectorConstants.PROFILE_UPDATE_SCIM_URL);
+        profile.setValue("https://attacker.example.test/scim/v2");
+        try {
+            new StalwartSCIMProvisioningConnector().init(new Property[]{url, token, profile});
+            throw new IllegalStateException("A different profile-update host must be rejected.");
+        } catch (org.wso2.carbon.identity.provisioning.IdentityProvisioningException expected) {
+            // Expected: the connector must not forward its bearer token to another origin.
+        }
+    }
+
+    private static void assertNameCompositionAllowsMissingParts() throws Exception {
+        Method method = StalwartSCIMProvisioningConnector.class.getDeclaredMethod(
+                "joinName", String.class, String.class);
+        method.setAccessible(true);
+        if (!"OnlyFirst".equals(method.invoke(null, "OnlyFirst", ""))
+                || !"OnlyLast".equals(method.invoke(null, "", "OnlyLast"))
+                || !"".equals(method.invoke(null, "", ""))) {
+            throw new IllegalStateException("Name composition must tolerate a missing first or last name.");
         }
     }
 
