@@ -1119,8 +1119,10 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
         for (JsonElement element : body.getAsJsonArray("Operations")) {
             if (!element.isJsonObject() || !element.getAsJsonObject().has("op")) return false;
             String op = element.getAsJsonObject().get("op").getAsString();
-            if (!"replace".equalsIgnoreCase(op) && !"remove".equalsIgnoreCase(op)
-                    && !"add".equalsIgnoreCase(op)) return false;
+            // Only replace is replay-safe for the connector's current SCIM PATCH
+            // contract. "add" may duplicate multi-valued data and "remove" can
+            // fail when the target value is already absent.
+            if (!"replace".equalsIgnoreCase(op)) return false;
         }
         return !body.getAsJsonArray("Operations").isEmpty();
     }
