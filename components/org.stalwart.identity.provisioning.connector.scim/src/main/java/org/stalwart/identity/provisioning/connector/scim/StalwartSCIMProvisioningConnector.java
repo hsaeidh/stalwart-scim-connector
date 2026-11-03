@@ -773,14 +773,21 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
         pending.result.whenComplete((result, error) -> BULK_PENDING_PERMITS.release());
         BulkBatch batch = BULK_BATCHES.computeIfAbsent(key, ignored -> new BulkBatch());
         synchronized (batch) {
-            batch.operations.add(pending);
-            if (batch.scheduled == null) {
-                batch.scheduled = BULK_DISPATCHER.schedule(() -> flushBulkBatch(key, batch),
-                        BULK_BATCH_WINDOW_MS, TimeUnit.MILLISECONDS);
-            }
-            if (batch.operations.size() >= BULK_BATCH_MAX_OPERATIONS) {
-                batch.scheduled.cancel(false);
-                batch.scheduled = BULK_DISPATCHER.schedule(() -> flushBulkBatch(key, batch), 0, TimeUnit.MILLISECONDS);
+            try {
+                batch.operations.add(pending);
+                if (batch.scheduled == null) {
+                    batch.scheduled = BULK_DISPATCHER.schedule(() -> flushBulkBatch(key, batch),
+                            BULK_BATCH_WINDOW_MS, TimeUnit.MILLISECONDS);
+                }
+                if (batch.operations.size() >= BULK_BATCH_MAX_OPERATIONS) {
+                    batch.scheduled.cancel(false);
+                    batch.scheduled = BULK_DISPATCHER.schedule(() -> flushBulkBatch(key, batch), 0, TimeUnit.MILLISECONDS);
+                }
+            } catch (RuntimeException e) {
+                batch.operations.remove(pending);
+                pending.result.completeExceptionally(new IdentityProvisioningException(
+                        "Unable to schedule the in-memory SCIM Bulk operation.", e));
+                if (batch.operations.isEmpty()) BULK_BATCHES.remove(key, batch);
             }
         }
         try {
@@ -861,12 +868,22 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
             }
             return;
         }
-        HttpRequest httpRequest = HttpRequest.newBuilder().uri(URI.create(batch.get(0).endpoint + "/Bulk"))
-                .timeout(Duration.ofMillis(bulkRequestTimeoutMs)).header("Authorization", "Bearer " + bearerToken)
-                .header("Accept", "application/scim+json").header("Content-Type", "application/scim+json")
-                .POST(HttpRequest.BodyPublishers.ofString(payload)).build();
         try {
-            HttpResponse<String> response = sendWithLimit(httpRequest);
+            HttpRequest httpRequest = HttpRequest.newBuilder().uri(URI.create(batch.get(0).endpoint + "/Bulk"))
+                    .timeout(Duration.ofMillis(bulkRequestTimeoutMs)).header("Authorization", "Bearer " + bearerToken)
+                    .header("Accept", "application/scim+json").header("Content-Type", "application/scim+json")
+                    .POST(HttpRequest.BodyPublishers.ofString(payload)).build();
+            HttpResponse<String> response = null;
+            for (int attempt = 1; attempt <= 3; attempt++) {
+                response = sendWithLimit(httpRequest);
+                int status = response.statusCode();
+                if ((status == 408 || status == 429 || status >= 500)
+                        && attempt < 3 && isBulkRetrySafe(batch)) {
+                    retryBackoff(attempt, response.headers().firstValue("Retry-After").orElse(null));
+                    continue;
+                }
+                break;
+            }
             int httpStatus = response.statusCode();
             if ((httpStatus == 404 || httpStatus == 405 || httpStatus == 501) && bulkFallbackToIndividual) {
                 bulkUnsupported = true;
@@ -910,6 +927,8 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
                             "Stalwart SCIM Bulk operation failed with HTTP " + status + "."));
                 }
             }
+        } catch (IdentityProvisioningException e) {
+            for (PendingBulkOperation item : batch) item.result.completeExceptionally(e);
         } catch (IOException e) {
             for (PendingBulkOperation item : batch) {
                 try {
@@ -932,6 +951,21 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
             IdentityProvisioningException failure = new IdentityProvisioningException("Invalid Stalwart Bulk response.", e);
             for (PendingBulkOperation item : batch) item.result.completeExceptionally(failure);
         }
+    }
+
+    private boolean isBulkRetrySafe(List<PendingBulkOperation> batch) {
+        for (PendingBulkOperation item : batch) {
+            if ("POST".equalsIgnoreCase(item.method)) {
+                if (!"/Users".equals(item.path) || item.body == null
+                        || !item.body.has("externalId")
+                        || StringUtils.isBlank(item.body.get("externalId").getAsString())) return false;
+            } else if ("PATCH".equalsIgnoreCase(item.method)) {
+                if (!isIdempotentPatch(item.body)) return false;
+            } else if (!"DELETE".equalsIgnoreCase(item.method)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private void completeIndividualFallback(PendingBulkOperation item) {
