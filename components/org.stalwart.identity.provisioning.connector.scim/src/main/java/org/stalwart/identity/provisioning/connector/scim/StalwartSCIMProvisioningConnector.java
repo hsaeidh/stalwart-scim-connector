@@ -274,9 +274,7 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
                             "Stalwart accepted no identifiable User resource after POST; provisioning outcome is unresolved.");
                 }
                 updateUser(entity, initialGroups == null ? null : emailEntitled);
-            } else {
-                // Initial memberships are applied once, after successful account creation.
-                }
+            }
         } else {
             log.info("Stalwart user already exists; reconciling attributes and membership deltas.");
             // Reconciliation must not require the current email claim. The stable
