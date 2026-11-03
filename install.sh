@@ -2,10 +2,10 @@
 set -Eeuo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-DEFAULT_JAR="$SCRIPT_DIR/components/org.stalwart.identity.provisioning.connector.scim/target/org.stalwart.identity.provisioning.connector.scim-2.0.6-SNAPSHOT.jar"
+DEFAULT_JAR="$SCRIPT_DIR/components/org.stalwart.identity.provisioning.connector.scim/target/org.stalwart.identity.provisioning.connector.scim-2.0.7-SNAPSHOT.jar"
 JAR_PATH="${1:-$DEFAULT_JAR}"
 
-printf '\nStalwart SCIM Connector 2.0.6 installer\n'
+printf '\nStalwart SCIM Connector 2.0.7 installer\n'
 printf 'Target type:\n  1) Linux VM\n  2) Docker container\n'
 read -r -p 'Select [1/2]: ' TARGET
 
@@ -37,8 +37,8 @@ if [[ "$TARGET" == "1" ]]; then
 fi
 [[ -f "$JAR_PATH" ]] || { echo "ERROR: connector JAR not found: $JAR_PATH"; exit 1; }
 command -v unzip >/dev/null || { echo "ERROR: unzip is required to verify the connector JAR."; exit 1; }
-unzip -p "$JAR_PATH" META-INF/MANIFEST.MF | tr -d '\r' | grep -q 'Bundle-Version: 2.0.6.SNAPSHOT' || {
-  echo "ERROR: selected JAR is not version 2.0.6-SNAPSHOT."; exit 1;
+unzip -p "$JAR_PATH" META-INF/MANIFEST.MF | tr -d '\r' | grep -q 'Bundle-Version: 2.0.7.SNAPSHOT' || {
+  echo "ERROR: selected JAR is not version 2.0.7-SNAPSHOT."; exit 1;
 }
 
 printf '\nDetected installation target\n'
@@ -90,7 +90,7 @@ if [[ "$TARGET" == "1" ]]; then
     chmod 0600 "$TOML_PATH"
   fi
 else
-  REMOTE_TMP="/tmp/stalwart-scim-connector-2.0.6.jar"
+  REMOTE_TMP="/tmp/stalwart-scim-connector-2.0.7.jar"
   docker cp "$JAR_PATH" "$CONTAINER:$REMOTE_TMP"
   docker exec "$CONTAINER" sh -lc "set -eu
     mkdir -p '$DROPINS' '$(dirname "$TOML_PATH")'
@@ -98,7 +98,7 @@ else
       [ -f \"\$old\" ] || continue
       mv \"\$old\" \"\$old.backup-$STAMP\"
     done
-    install -m 0644 '$REMOTE_TMP' '$DROPINS/org.stalwart.identity.provisioning.connector.scim-2.0.6-SNAPSHOT.jar'
+    install -m 0644 '$REMOTE_TMP' '$DROPINS/org.stalwart.identity.provisioning.connector.scim-2.0.7-SNAPSHOT.jar'
     rm -f '$REMOTE_TMP'
     if [ ! -f '$TOML_PATH' ]; then
       cat > '$TOML_PATH' <<'TOML_EOF'
