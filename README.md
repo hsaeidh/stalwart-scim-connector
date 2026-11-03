@@ -519,12 +519,15 @@ Workflow مخزن موارد زیر را اجرا می‌کند:
 - اجرای `mvn clean verify`؛
 - تست‌های Smoke برای Factory و TOML؛
 - تجمیع Bulk و Retry پاسخ HTTP سطح Batch؛
-- سیاست Email group و تفاوت Claim غایب با Snapshot خالی؛
-- تست تقدم Snapshot بر Delta متناقض؛
 - تست Retry فقط Operation ناموفق در پاسخ Bulk با HTTP 200؛
+- بازیابی ایمیل و پروفایل مفقود در رویداد Group Add از UserStore؛
+- تقدم Snapshot کامل گروه بر Delta متناقض؛
+- تطبیق Create با پاسخ 409 و جلوگیری از ساخت تکراری؛
+- تغییر مستقل FIRSTNAME، LASTNAME و DISPLAYNAME و خواندن Snapshot کامل نام؛
+- رد Active Claim نامعتبر یا مفقود؛
+- جداسازی Cache شناسه‌ها بین Tenantها؛
 - تبدیل Delete به PATCH `active=false`؛
-- عدم تغییر Claimهای هویتی؛
-- پاک‌کردن displayName؛
+- عدم تغییر Claimهای هویتی و پاک‌کردن displayName؛
 - بررسی ساخت Bundle و عدم بسته‌بندی APIهای WSO2 و Outbox.
 
 این تست‌ها از HTTP Mock و محیط CI استفاده می‌کنند و جایگزین آزمون روی WSO2/Stalwart واقعی نیستند.
