@@ -316,6 +316,15 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
     private void updateUser(ProvisioningEntity entity, Boolean emailMembershipSnapshot)
             throws IdentityProvisioningException {
         Map<ClaimMapping, List<String>> attrs = entity.getAttributes();
+        // WSO2 role-list update events include the complete current group list
+        // as well as NEW_GROUP/DELETED_GROUP deltas. Prefer that authoritative
+        // snapshot whenever present; it closes the gate even if a delta is lost.
+        if (emailMembershipSnapshot == null) {
+            List<String> currentGroups = groupNames(attrs);
+            if (currentGroups != null) {
+                emailMembershipSnapshot = currentGroups.stream().anyMatch(this::isEmailMembershipGroup);
+            }
+        }
         // Email address, aliases and the WSO2 local username are deliberately
         // outside the Stalwart synchronization contract. If an update contains
         // no supported profile, active-state or group-membership delta, return
@@ -353,12 +362,12 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
         // Email membership is the mandatory authorization gate. The optional
         // active claim can only revoke access; it cannot independently grant it.
         Boolean desiredActive = null;
-        if (emailMembershipRemoved) {
+        if (emailMembershipSnapshot != null) {
+            desiredActive = emailMembershipSnapshot && activeClaimAllows(attrs, entity.getEntityName());
+        } else if (emailMembershipRemoved) {
             desiredActive = false;
         } else if (emailMembershipAdded) {
             desiredActive = activeClaimAllows(attrs, entity.getEntityName());
-        } else if (emailMembershipSnapshot != null) {
-            desiredActive = emailMembershipSnapshot && activeClaimAllows(attrs, entity.getEntityName());
         } else if (Boolean.FALSE.equals(activeClaimState(attrs))) {
             desiredActive = false;
         }
