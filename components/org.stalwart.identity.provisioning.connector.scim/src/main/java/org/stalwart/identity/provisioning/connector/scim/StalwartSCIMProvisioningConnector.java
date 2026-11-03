@@ -321,6 +321,10 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
                 && deletedGroups.stream().anyMatch(this::isEmailMembershipGroup);
         boolean emailMembershipAdded = newGroups != null
                 && newGroups.stream().anyMatch(this::isEmailMembershipGroup);
+        if (emailMembershipAdded && findUserId(attrs, entity.getEntityName()) == null) {
+            String stableId = targetUserIdentifier(attrs, entity.getEntityName());
+            request("POST", "/Users", userPayload(attrs, targetUserName(attrs, entity.getEntityName()), stableId));
+        }
         JsonObject profilePatch = userPatch(attrs, enableProfileUpdates, entity.getEntityName());
         if (profilePatch.getAsJsonArray("Operations").size() > 0) {
             String id = findUserId(attrs, entity.getEntityName());
@@ -677,6 +681,21 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
     });
     private static final int BULK_BATCH_MAX_OPERATIONS = 100;
     private static final long BULK_BATCH_WINDOW_MS = 150;
+
+    /** Completes pending in-memory requests before the OSGi bundle is stopped. */
+    public static void shutdownBulkDispatcher() {
+        BULK_DISPATCHER.shutdown();
+        IdentityProvisioningException stopped =
+                new IdentityProvisioningException("Connector bundle is stopping; pending in-memory Bulk batch was not sent.");
+        for (BulkBatch batch : BULK_BATCHES.values()) {
+            synchronized (batch) {
+                for (PendingBulkOperation item : batch.operations) item.result.completeExceptionally(stopped);
+                batch.operations.clear();
+                if (batch.scheduled != null) batch.scheduled.cancel(false);
+            }
+        }
+        BULK_BATCHES.clear();
+    }
 
     /** Short in-memory micro-batching. Every caller waits for its own Stalwart operation result. */
     private JsonObject requestBulkAt(String endpointBaseUrl, String method, String path, JsonObject body)

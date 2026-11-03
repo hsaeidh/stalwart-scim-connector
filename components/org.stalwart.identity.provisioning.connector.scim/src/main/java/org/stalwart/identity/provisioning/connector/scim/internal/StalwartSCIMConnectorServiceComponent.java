@@ -104,6 +104,7 @@ public class StalwartSCIMConnectorServiceComponent {
     @Deactivate
     protected void deactivate(ComponentContext context) {
         System.err.println(">>> STALWART-SCIM DEACTIVATE v2.0.6");
+        StalwartSCIMProvisioningConnector.shutdownBulkDispatcher();
         unregisterFactory();
     }
 
