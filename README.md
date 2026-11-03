@@ -2,7 +2,7 @@
 
 ## وضعیت نسخه
 
-نسخه توسعه: **2.0.6-SNAPSHOT**
+نسخه توسعه: **2.0.7-SNAPSHOT**
 
 این نسخه در حال بازطراحی است. تا پیش از موفقیت CI و آزمون عملی روی WSO2 IS 7.3.0 و Stalwart Enterprise 1.0.2، آن را برای محیط Production تأییدشده تلقی نکنید.
 
@@ -34,12 +34,15 @@
 
 ## رفتار حساب و گروه Email
 
-گروه WSO2 با نام پیش‌فرض `Email` فقط نقش مجوز دسترسی به ایمیل را دارد:
-- اضافه‌شدن به گروه Email: `active=true`
-- حذف از گروه Email: `active=false`
-- حذف کاربر از WSO2: `active=false`
+گروه WSO2 با نام پیش‌فرض `Email` شرط لازم و اجباری دسترسی به ایمیل است:
+- هنگام ایجاد حساب، نبودن عضویت قطعی در گروه Email باعث می‌شود حساب با `active=false` ساخته شود؛
+- اضافه‌شدن به گروه Email فقط در صورتی حساب را فعال می‌کند که Claim وضعیت اختیاری نیز حساب را غیرفعال نکرده باشد؛
+- حذف از گروه Email همیشه `active=false` می‌کند؛
+- Claim وضعیت اختیاری می‌تواند دسترسی را لغو کند، اما به‌تنهایی هرگز مجوز فعال‌سازی نمی‌دهد؛
+- اگر رویداد فقط Claim وضعیت را داشته باشد و عضویت گروه را اثبات نکند، مقدار true آن باعث فعال‌سازی نمی‌شود؛
+- حذف کاربر از WSO2 نیز به `active=false` تبدیل می‌شود.
 
-هیچ درخواست SCIM برای ایجاد، جست‌وجو، تغییر یا حذف گروه Stalwart ارسال نمی‌شود. در صورت نیاز به فعال‌سازی مجدد، اضافه‌شدن مجدد به گروه Email مقدار active را به true برمی‌گرداند.
+اگر فهرست کامل گروه‌ها در رویداد اولیه موجود نباشد، کانکتور fail-closed عمل می‌کند و حساب را غیرفعال می‌سازد. برای فعال‌سازی بعدی باید رویداد افزودن به گروه Email دریافت شود. هیچ درخواست SCIM برای ایجاد، جست‌وجو، تغییر یا حذف Group در Stalwart ارسال نمی‌شود.
 
 ## نگاشت Claim پیش‌فرض
 
@@ -82,7 +85,7 @@ mvn -B -ntp clean verify
 JAR خروجی:
 
 ```
-components/org.stalwart.identity.provisioning.connector.scim/target/org.stalwart.identity.provisioning.connector.scim-2.0.6-SNAPSHOT.jar
+components/org.stalwart.identity.provisioning.connector.scim/target/org.stalwart.identity.provisioning.connector.scim-2.0.7-SNAPSHOT.jar
 ```
 
 فقط JAR کانکتور باید در WSO2 نصب شود؛ APIهای WSO2 داخل JAR بسته‌بندی نمی‌شوند. Gson به‌صورت dependency داخلی Bundle قرار می‌گیرد.
@@ -93,7 +96,7 @@ components/org.stalwart.identity.provisioning.connector.scim/target/org.stalwart
 
 ```bash
 chmod +x install.sh uninstall.sh
-./install.sh /path/to/org.stalwart.identity.provisioning.connector.scim-2.0.6-SNAPSHOT.jar
+./install.sh /path/to/org.stalwart.identity.provisioning.connector.scim-2.0.7-SNAPSHOT.jar
 ```
 
 نصب‌کننده ابتدا VM یا Docker را می‌پرسد؛ در حالت Docker نام Container را می‌گیرد. مسیر dropins و مسیر TOML را تشخیص داده و پیش از هر تغییری تأیید می‌خواهد. JAR قبلی همین Bundle با پسوند backup نگهداری می‌شود. فایل‌های دیگر حذف یا جایگزین نمی‌شوند. برای حذف، `./uninstall.sh` را اجرا کنید؛ اسکریپت JAR را به فایل disabled منتقل می‌کند و TOML را نگه می‌دارد.
@@ -101,7 +104,7 @@ chmod +x install.sh uninstall.sh
 ## نصب دستی
 
 1. WSO2 را متوقف کنید.
-2. JAR نسخه 2.0.6 را در مسیر زیر کپی کنید:
+2. JAR نسخه 2.0.7 را در مسیر زیر کپی کنید:
 
    `<WSO2_HOME>/repository/components/dropins/`
 
@@ -137,7 +140,10 @@ email-membership-group = "Email"
 
 - در محیط غیرآزمایشی فقط HTTPS استفاده کنید. HTTP فقط برای localhost و آزمون محلی پذیرفته می‌شود.
 - Token در لاگ چاپ نمی‌شود.
-- از API Key اختصاصی با حداقل مجوزهای لازم استفاده کنید.
+- جست‌وجوی کاربر با SCIM `POST /Users/.search` انجام می‌شود تا ایمیل و شناسه‌های کاربر در query string و لاگ‌های URL قرار نگیرند.
+- آدرس جایگزین Profile Update باید هم‌مبدأ (scheme/host/port یکسان) با آدرس اصلی باشد؛ Token به میزبان دیگر ارسال نمی‌شود.
+- کلید ناشناخته در بخش `[stalwart-scim]` باعث خطای راه‌اندازی می‌شود تا غلط املایی تنظیمات بی‌صدا نادیده گرفته نشود.
+- Cache شناسه‌ها و دسته‌بندی Bulk به Tenant و User Store Domain محدود شده‌اند.
 - از TLS verification صرف‌نظر نکنید.
 - دسته‌های Bulk در حافظه نگهداری می‌شوند و durable نیستند؛ این رفتار با طراحی بدون Outbox سازگار است، اما در برابر crash تضمین بازیابی ندارد.
 - پاسخ‌های Bulk باید شامل یک نتیجه برای هر Operation باشند؛ نتیجه ناقص به‌عنوان موفقیت تلقی نمی‌شود.
@@ -145,7 +151,7 @@ email-membership-group = "Email"
 
 ## آزمون‌های پذیرش لازم
 
-CI باید ساخت Maven، تست Factory، تجمیع درخواست‌های هم‌زمان در Bulk، و تبدیل DELETE به PATCH active=false را بررسی کند. علاوه بر آن، قبل از Production این موارد روی WSO2 IS 7.3.0 و Stalwart Enterprise 1.0.2 واقعی آزمایش شوند:
+CI ساخت Maven، تست Factory، تجمیع درخواست‌های هم‌زمان در Bulk، تبدیل DELETE به PATCH active=false، سیاست fail-closed گروه Email، بی‌اثر بودن Active Claim مثبت بدون عضویت Email، جست‌وجوی POST و پاک‌کردن displayName را بررسی می‌کند. علاوه بر آن، قبل از Production این موارد روی WSO2 IS 7.3.0 و Stalwart Enterprise 1.0.2 واقعی آزمایش شوند:
 
 1. فعال‌شدن Bundle و تزریق RealmService در OSGi؛
 2. خواندن Claimهای جاری FIRSTNAME/LASTNAME برای UserStore اصلی و ثانویه؛
