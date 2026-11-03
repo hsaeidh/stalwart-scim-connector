@@ -256,7 +256,7 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
         List<String> initialGroups = groupNames(attrs);
         boolean emailEntitled = initialGroups != null
                 && initialGroups.stream().anyMatch(this::isEmailMembershipGroup);
-        boolean activeClaimAllows = activeClaimAllows(attrs);
+        boolean activeClaimAllows = activeClaimAllows(attrs, entity.getEntityName());
         // WSO2 can retry a failed provisioning event. Reuse an existing account so
         // a later group-membership failure does not cause a duplicate-user conflict.
         if (existingId == null) {
@@ -339,7 +339,7 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
         if (emailMembershipAdded && findUserId(attrs, entity.getEntityName()) == null) {
             String stableId = targetUserIdentifier(attrs, entity.getEntityName());
             JsonObject newUser = userPayload(attrs, targetUserName(attrs, entity.getEntityName()), stableId);
-            newUser.addProperty("active", activeClaimAllows(attrs));
+            newUser.addProperty("active", activeClaimAllows(attrs, entity.getEntityName()));
             request("POST", "/Users", newUser);
         }
         JsonObject profilePatch = userPatch(attrs, enableProfileUpdates, entity.getEntityName());
@@ -360,7 +360,7 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
         } else if (emailMembershipAdded) {
             desiredActive = activeClaimAllows(attrs);
         } else if (emailMembershipSnapshot != null) {
-            desiredActive = emailMembershipSnapshot && activeClaimAllows(attrs);
+            desiredActive = emailMembershipSnapshot && activeClaimAllows(attrs, entity.getEntityName());
         } else if (Boolean.FALSE.equals(activeClaimState(attrs))) {
             desiredActive = false;
         }
@@ -698,9 +698,36 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
         return invertActiveClaim ? !parsed : parsed;
     }
 
-    private boolean activeClaimAllows(Map<ClaimMapping, List<String>> attrs)
+    private boolean activeClaimAllows(Map<ClaimMapping, List<String>> attrs, String fallbackUserName)
             throws IdentityProvisioningException {
-        return !Boolean.FALSE.equals(activeClaimState(attrs));
+        if (StringUtils.isBlank(activeClaimUri)) return true;
+        Boolean state = activeClaimState(attrs);
+        if (state != null) return state;
+
+        // Group-membership events often carry only NEW_GROUP/DELETED_GROUP claims.
+        // If an Active Claim is configured, read its authoritative current value
+        // from WSO2 instead of silently treating a missing value as enabled.
+        String lookupName = fallbackUserName;
+        if (StringUtils.isNotBlank(userStoreDomainName) && StringUtils.isNotBlank(lookupName)
+                && lookupName.indexOf('/') < 0) {
+            lookupName = userStoreDomainName.trim() + "/" + lookupName.trim();
+        }
+        try {
+            Map<String, String> snapshot = Wso2UserClaimSnapshot.read(
+                    lookupName, new String[]{activeClaimUri});
+            String value = snapshot.get(activeClaimUri);
+            if (StringUtils.isBlank(value)) {
+                throw new IdentityProvisioningException(
+                        "Configured Active Claim is missing from the WSO2 UserStore; refusing to activate the Stalwart account.");
+            }
+            boolean parsed = parseBooleanClaim(value, activeClaimUri);
+            return invertActiveClaim ? !parsed : parsed;
+        } catch (IdentityProvisioningException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new IdentityProvisioningException(
+                    "Unable to read the configured Active Claim from the current WSO2 UserStore.", e);
+        }
     }
 
     private JsonObject request(String method, String path, JsonObject body) throws IdentityProvisioningException {
