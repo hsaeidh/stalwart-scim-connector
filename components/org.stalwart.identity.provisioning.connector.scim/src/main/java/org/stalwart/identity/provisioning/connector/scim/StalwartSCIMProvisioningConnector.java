@@ -891,20 +891,6 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
         catch (NumberFormatException e) { return 0; }
     }
 
-    private boolean postResourceNowExists(String path, JsonObject body) throws IdentityProvisioningException {
-        if (!"/Users".equals(path) || body == null || !body.has("externalId")) return false;
-        String expected = body.get("externalId").getAsString();
-        if (findResourceId("Users", "externalId", expected) != null) return true;
-        if (!body.has("userName")) return false;
-        String byName = findResourceId("Users", "userName", body.get("userName").getAsString());
-        if (byName == null) return false;
-        JsonObject existing = requestAtIndividual(baseUrl, "GET", "/Users/" + pathSegment(byName), null);
-        String actual = existing.has("externalId") && !existing.get("externalId").isJsonNull()
-                ? existing.get("externalId").getAsString() : null;
-        if (expected.equals(actual)) return true;
-        throw new IdentityProvisioningException("Stalwart userName belongs to another externalId; account adoption refused.");
-    }
-
     private int parseIntegerProperty(String value, String name) throws IdentityProvisioningException {
         try {
             return Integer.parseInt(value);
