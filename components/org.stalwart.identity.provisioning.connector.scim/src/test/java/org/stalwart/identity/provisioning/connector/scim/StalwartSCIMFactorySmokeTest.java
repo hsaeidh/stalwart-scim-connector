@@ -37,6 +37,7 @@ public final class StalwartSCIMFactorySmokeTest {
         assertCreateRequiresEmailGroup();
         assertGroupDeltaControlsAccess();
         assertProfileDisplayNameCanBeCleared();
+        assertIdentityClaimsAreNotUpdated();
         assertDeleteDisablesAccount();
         System.out.println("SMOKE TEST PASSED v2.0.7");
     }
@@ -323,6 +324,22 @@ public final class StalwartSCIMFactorySmokeTest {
                 throw new IllegalStateException("WSO2 delete must become SCIM PATCH active=false.");
             }
         } finally { server.stop(0); }
+    }
+
+
+    private static void assertIdentityClaimsAreNotUpdated() throws Exception {
+        StalwartSCIMProvisioningConnector connector = newConnector(
+                "http://127.0.0.1:18081/scim/v2", "INDIVIDUAL");
+        Map<ClaimMapping, List<String>> attributes = claims(
+                "http://wso2.org/claims/emailaddress", "changed@example.test",
+                "http://wso2.org/claims/username", "changed-local-id",
+                "http://wso2.org/claims/aliases", "alias@example.test");
+        Method method = StalwartSCIMProvisioningConnector.class.getDeclaredMethod(
+                "hasSupportedUpdate", Map.class);
+        method.setAccessible(true);
+        if ((Boolean) method.invoke(connector, attributes)) {
+            throw new IllegalStateException("Email, alias and local identity changes must not trigger Stalwart updates.");
+        }
     }
 
     private static StalwartSCIMProvisioningConnector newConnector(String base, String mode) throws Exception {
