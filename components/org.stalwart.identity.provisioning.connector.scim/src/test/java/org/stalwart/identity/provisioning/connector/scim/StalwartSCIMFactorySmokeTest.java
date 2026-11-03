@@ -28,6 +28,11 @@ public final class StalwartSCIMFactorySmokeTest {
     private StalwartSCIMFactorySmokeTest() { }
 
     public static void main(String[] args) throws Exception {
+        // CarbonContext initialization expects the standard WSO2 carbon.home property.
+        // CI is not running inside WSO2, so provide an isolated temporary home first.
+        if (System.getProperty("carbon.home") == null) {
+            System.setProperty("carbon.home", Files.createTempDirectory("stalwart-scim-carbon-home").toString());
+        }
         StalwartSCIMProvisioningConnectorFactory factory = new StalwartSCIMProvisioningConnectorFactory();
         List<Property> properties = factory.getConfigurationProperties();
         if (!"stalwart-scim".equals(factory.getConnectorType()) || properties.size() != 19) {
