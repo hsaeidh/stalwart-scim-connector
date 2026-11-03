@@ -41,6 +41,7 @@ public final class StalwartSCIMFactorySmokeTest {
         assertTomlConfiguration();
         assertBulkMicroBatch();
         assertCreateRequiresEmailGroup();
+        assertAbsentAndEmptyGroupClaimsDiffer();
         assertGroupDeltaControlsAccess();
         assertProfileDisplayNameCanBeCleared();
         assertIdentityClaimsAreNotUpdated();
@@ -157,6 +158,64 @@ public final class StalwartSCIMFactorySmokeTest {
                     ProvisioningOperation.POST, disabled));
             if (creates.size() != 3 || creates.get(2).get("active").getAsBoolean()) {
                 throw new IllegalStateException("A false Active Claim must disable an otherwise Email-entitled account.");
+            }
+        } finally {
+            server.stop(0);
+        }
+    }
+
+
+    private static void assertAbsentAndEmptyGroupClaimsDiffer() throws Exception {
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        List<JsonObject> patches = new java.util.concurrent.CopyOnWriteArrayList<>();
+        server.createContext("/scim/v2", exchange -> {
+            String path = exchange.getRequestURI().getPath();
+            if ("POST".equals(exchange.getRequestMethod()) && path.endsWith("/.search")) {
+                JsonObject user = new JsonObject();
+                user.addProperty("id", "existing-user");
+                JsonArray resources = new JsonArray();
+                resources.add(user);
+                JsonObject response = new JsonObject();
+                response.addProperty("totalResults", 1);
+                response.add("Resources", resources);
+                byte[] bytes = response.toString().getBytes(StandardCharsets.UTF_8);
+                exchange.sendResponseHeaders(200, bytes.length);
+                try (var out = exchange.getResponseBody()) { out.write(bytes); }
+                return;
+            }
+            if ("PATCH".equals(exchange.getRequestMethod())) {
+                patches.add(JsonParser.parseString(new String(exchange.getRequestBody().readAllBytes(),
+                        StandardCharsets.UTF_8)).getAsJsonObject());
+                exchange.sendResponseHeaders(204, -1);
+                exchange.close();
+                return;
+            }
+            exchange.sendResponseHeaders(404, -1);
+            exchange.close();
+        });
+        server.start();
+        try {
+            String base = "http://127.0.0.1:" + server.getAddress().getPort() + "/scim/v2";
+            StalwartSCIMProvisioningConnector connector = newConnector(base, "INDIVIDUAL");
+            Map<ClaimMapping, List<String>> absent = claims(
+                    "http://wso2.org/claims/emailaddress", "unknown@example.test",
+                    "http://wso2.org/claims/username", "stable-unknown");
+            connector.provision(new ProvisioningEntity(ProvisioningEntityType.USER, "stable-unknown",
+                    ProvisioningOperation.POST, absent));
+            if (!patches.isEmpty()) {
+                throw new IllegalStateException("An absent full-group claim must not revoke an existing user's access.");
+            }
+
+            Map<ClaimMapping, List<String>> empty = claims(
+                    "http://wso2.org/claims/emailaddress", "empty@example.test",
+                    "http://wso2.org/claims/username", "stable-empty",
+                    IdentityProvisioningConstants.GROUP_CLAIM_URI, "");
+            connector.provision(new ProvisioningEntity(ProvisioningEntityType.USER, "stable-empty",
+                    ProvisioningOperation.POST, empty));
+            if (patches.size() != 1
+                    || patches.get(0).getAsJsonArray("Operations").get(0).getAsJsonObject()
+                    .get("value").getAsBoolean()) {
+                throw new IllegalStateException("A present but empty group snapshot must disable email access.");
             }
         } finally {
             server.stop(0);
