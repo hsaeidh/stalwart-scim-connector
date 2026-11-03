@@ -1195,7 +1195,7 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
         for (int i = 0; i < line.length(); i++) {
             char ch = line.charAt(i);
             if (escaped) { escaped = false; continue; }
-            if (quoted && ch == '\\\\') { escaped = true; continue; }
+            if (quoted && ch == 92) { escaped = true; continue; }
             if (ch == '"') quoted = !quoted;
             if (ch == '#' && !quoted) return line.substring(0, i);
         }
@@ -1214,10 +1214,10 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
                     if (ch == 'n') decoded.append('\n');
                     else if (ch == 'r') decoded.append('\r');
                     else if (ch == 't') decoded.append('\t');
-                    else if (ch == '"' || ch == '\\\\') decoded.append(ch);
+                    else if (ch == '"' || ch == 92) decoded.append(ch);
                     else throw new IdentityProvisioningException("Unsupported TOML escape in " + file);
                     escaped = false;
-                } else if (ch == '\\\\') escaped = true;
+                } else if (ch == 92) escaped = true;
                 else decoded.append(ch);
             }
             if (escaped) throw new IdentityProvisioningException("Incomplete TOML escape in " + file);
