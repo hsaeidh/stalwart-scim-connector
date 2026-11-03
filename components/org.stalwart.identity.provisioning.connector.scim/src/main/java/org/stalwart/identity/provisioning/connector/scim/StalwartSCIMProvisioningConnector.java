@@ -561,24 +561,6 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
         return null;
     }
 
-    private String findUserIdByIdentifier(String identifier) throws IdentityProvisioningException {
-        if (StringUtils.isBlank(identifier)) return null;
-        String candidate = stripUserStoreDomain(identifier);
-        String id = findResourceId("Users", "externalId", candidate);
-        if (id == null && !candidate.equals(identifier)) {
-            id = findResourceId("Users", "externalId", identifier);
-        }
-        if (id != null) return id;
-        // Email identifiers can legitimately be supplied by legacy group claims;
-        // numeric/stable identifiers are externalId and need no username fallback.
-        if (candidate.indexOf('@') >= 0) {
-            id = findResourceId("Users", "userName", candidate);
-            return id != null ? id : (candidate.equals(identifier) ? null
-                    : findResourceId("Users", "userName", identifier));
-        }
-        return null;
-    }
-
     private String stripUserStoreDomain(String value) {
         if (StringUtils.isBlank(value)) return value;
         int slash = value.indexOf('/');
