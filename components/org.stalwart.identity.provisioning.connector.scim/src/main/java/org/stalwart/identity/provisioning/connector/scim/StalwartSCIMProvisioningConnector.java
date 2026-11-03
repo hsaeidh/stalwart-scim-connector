@@ -358,7 +358,7 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
         if (emailMembershipRemoved) {
             desiredActive = false;
         } else if (emailMembershipAdded) {
-            desiredActive = activeClaimAllows(attrs);
+            desiredActive = activeClaimAllows(attrs, entity.getEntityName());
         } else if (emailMembershipSnapshot != null) {
             desiredActive = emailMembershipSnapshot && activeClaimAllows(attrs, entity.getEntityName());
         } else if (Boolean.FALSE.equals(activeClaimState(attrs))) {
@@ -479,8 +479,6 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
                 throw new IdentityProvisioningException(
                         "Unable to read the complete current FIRSTNAME/LASTNAME snapshot from WSO2 UserStore.", e);
             }
-        } else if (includeProfile && StringUtils.isNotBlank(display)) {
-            addReplace(operations, "displayName", display.trim());
         }
 
         return patchDocument(operations);
@@ -600,7 +598,7 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
         if (StringUtils.isBlank(value)) return null;
         int tenantId = currentTenantId();
         String cacheKey = cacheKey(resource, attribute, value);
-        if (tenantId >= 0) {
+        if (tenantId != -1) {
             CacheEntry cached = RESOURCE_ID_CACHE.get(cacheKey);
             if (cached != null) {
                 if (cached.isValid()) return cached.id;
@@ -658,7 +656,7 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
     }
 
     private void cacheResourceId(String resource, String attribute, String value, String id) {
-        if (currentTenantId() < 0 || StringUtils.isBlank(value) || StringUtils.isBlank(id)) return;
+        if (currentTenantId() == -1 || StringUtils.isBlank(value) || StringUtils.isBlank(id)) return;
         RESOURCE_ID_CACHE.put(cacheKey(resource, attribute, value), new CacheEntry(id));
         if (RESOURCE_ID_CACHE.size() > 10000) { long now = System.currentTimeMillis(); RESOURCE_ID_CACHE.entrySet().removeIf(entry -> entry.getValue().expiresAt <= now); }
     }
@@ -788,7 +786,7 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
             throws IdentityProvisioningException {
         // Never share an in-memory batch across requests whose WSO2 tenant context
         // cannot be identified. In that rare case, retain correctness via Individual mode.
-        if (currentTenantId() < 0) {
+        if (currentTenantId() == -1) {
             return requestAtIndividual(endpointBaseUrl, method, path, body);
         }
         if (bulkUnsupported) {
