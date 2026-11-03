@@ -33,9 +33,9 @@ public class StalwartSCIMConnectorServiceComponent {
      * commons-logging initialization completed.
      */
     static {
-        System.err.println(">>> STALWART-SCIM STATIC INIT ENTERING v2.0.5");
+        System.err.println(">>> STALWART-SCIM STATIC INIT ENTERING v2.0.6");
         LOG = LogFactory.getLog(StalwartSCIMConnectorServiceComponent.class);
-        System.err.println(">>> STALWART-SCIM STATIC INIT DONE v2.0.5 log=" + LOG);
+        System.err.println(">>> STALWART-SCIM STATIC INIT DONE v2.0.6 log=" + LOG);
     }
 
     private ServiceRegistration<?> factoryRegistration;
@@ -43,22 +43,22 @@ public class StalwartSCIMConnectorServiceComponent {
     @Reference(service = RealmService.class, unbind = "unsetRealmService")
     protected void setRealmService(RealmService realmService) {
         Wso2UserClaimSnapshot.bind(realmService);
-        System.err.println(">>> STALWART-SCIM RealmService bound v2.0.5");
+        System.err.println(">>> STALWART-SCIM RealmService bound v2.0.6");
     }
 
     protected void unsetRealmService(RealmService realmService) {
         Wso2UserClaimSnapshot.unbind(realmService);
-        System.err.println(">>> STALWART-SCIM RealmService unbound v2.0.5");
+        System.err.println(">>> STALWART-SCIM RealmService unbound v2.0.6");
     }
 
     public StalwartSCIMConnectorServiceComponent() {
         super();
-        System.err.println(">>> STALWART-SCIM CONSTRUCTOR v2.0.5");
+        System.err.println(">>> STALWART-SCIM CONSTRUCTOR v2.0.6");
     }
 
     @Activate
     protected void activate(ComponentContext context) {
-        System.err.println(">>> STALWART-SCIM ACTIVATE START v2.0.5");
+        System.err.println(">>> STALWART-SCIM ACTIVATE START v2.0.6");
         try {
             if (context == null) {
                 throw new IllegalStateException("DS supplied a null ComponentContext.");
@@ -83,10 +83,10 @@ public class StalwartSCIMConnectorServiceComponent {
                 throw new IllegalStateException("OSGi registerService returned null for provisioning factory.");
             }
 
-            System.err.println(">>> STALWART-SCIM ACTIVATE END v2.0.5 — READY");
+            System.err.println(">>> STALWART-SCIM ACTIVATE END v2.0.6 — READY");
             LOG.info("Stalwart SCIM connector activated; service registration=" + factoryRegistration);
         } catch (Throwable t) {
-            System.err.println(">>> STALWART-SCIM ACTIVATE FAILED v2.0.5: " + t);
+            System.err.println(">>> STALWART-SCIM ACTIVATE FAILED v2.0.6: " + t);
             t.printStackTrace(System.err);
             LOG.error("Stalwart SCIM connector activation failed.", t);
 
@@ -103,8 +103,7 @@ public class StalwartSCIMConnectorServiceComponent {
 
     @Deactivate
     protected void deactivate(ComponentContext context) {
-        System.err.println(">>> STALWART-SCIM DEACTIVATE v2.0.5");
-        StalwartSCIMProvisioningConnector.shutdownHybridScheduler();
+        System.err.println(">>> STALWART-SCIM DEACTIVATE v2.0.6");
         unregisterFactory();
     }
 

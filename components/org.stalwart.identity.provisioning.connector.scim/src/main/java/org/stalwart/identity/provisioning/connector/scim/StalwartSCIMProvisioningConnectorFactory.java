@@ -30,7 +30,6 @@ public class StalwartSCIMProvisioningConnectorFactory extends AbstractProvisioni
 
     @Override
     public List<Property> getConfigurationProperties() {
-        System.out.println(">>> STALWART-SCIM getConfigurationProperties() called");
         try {
             List<Property> properties = new ArrayList<>();
             properties.add(property(StalwartSCIMProvisioningConnectorConstants.BASE_URL,
@@ -72,13 +71,13 @@ public class StalwartSCIMProvisioningConnectorFactory extends AbstractProvisioni
             properties.add(property(StalwartSCIMProvisioningConnectorConstants.EMAIL_MEMBERSHIP_GROUP,
                     "WSO2 group that grants email access", "Email", false, false, 15));
             Property mode = property(StalwartSCIMProvisioningConnectorConstants.PROVISIONING_MODE,
-                    "Provisioning Mode (INDIVIDUAL, BULK or HYBRID)", "INDIVIDUAL", false, false, 16);
-            mode.setDescription("INDIVIDUAL sends each SCIM mutation synchronously to its standard endpoint. BULK first commits every mutation to the built-in WSO2 Carbon JDBC outbox, then delivers queued operations in multi-operation SCIM Bulk requests. Pending operations survive WSO2 and host restarts and are retried automatically. HYBRID creates users immediately, sends non-profile changes individually, and queues supported profile-name changes for multi-operation Bulk PATCH delivery every five minutes. Primary email, email aliases, and WSO2 local username changes are never synchronized.");
+                    "Provisioning Mode (INDIVIDUAL or BULK)", "INDIVIDUAL", false, false, 16);
+            mode.setDescription("INDIVIDUAL sends each SCIM mutation synchronously. BULK briefly aggregates concurrent mutations in memory (150 ms or up to 100 operations), sends one SCIM Bulk request, and waits for each operation result. No persistent queue, database table, scheduler or background retry is used. Primary email, aliases and WSO2 local username changes are never synchronized.");
             properties.add(mode);
             Property fallback = property(StalwartSCIMProvisioningConnectorConstants.BULK_FALLBACK_TO_INDIVIDUAL,
                     "Fallback to Individual if Bulk endpoint is unavailable", "true", false, false, 17);
             fallback.setType("boolean");
-            fallback.setDescription("When Stalwart definitively reports that the Bulk endpoint is unavailable (HTTP 404, 405, or 501), deliver the already-persisted operation through its Individual endpoint. Ambiguous network outcomes are never replayed as Individual requests.");
+            fallback.setDescription("When Stalwart definitively reports that the Bulk endpoint is unavailable (HTTP 404, 405, or 501), deliver the pending operations through their Individual endpoints. Ambiguous network outcomes are not replayed automatically.");
             properties.add(fallback);
             Property bulkTimeout = property(StalwartSCIMProvisioningConnectorConstants.BULK_REQUEST_TIMEOUT_MS,
                     "Bulk request timeout (1000-120000 ms)", "30000", false, false, 18);
@@ -89,12 +88,8 @@ public class StalwartSCIMProvisioningConnectorFactory extends AbstractProvisioni
             bulkPayload.setDescription("Maximum encoded size of a Bulk request body in bytes. The default leaves a safety margin below Stalwart's 1 MiB request limit.");
             properties.add(bulkPayload);
 
-            System.out.println(">>> STALWART-SCIM getConfigurationProperties() returned "
-                    + properties.size() + " properties");
             return properties;
         } catch (RuntimeException | Error e) {
-            System.err.println(">>> STALWART-SCIM getConfigurationProperties() FAILED: " + e);
-            e.printStackTrace(System.err);
             throw e;
         }
     }
