@@ -906,8 +906,23 @@ public final class StalwartSCIMFactorySmokeTest {
             find.setAccessible(true);
             PrivilegedCarbonContext.getThreadLocalCarbonContext().setTenantId(1);
             String tenantOne = (String) find.invoke(connector, "Users", "externalId", "same-stable-id");
-            PrivilegedCarbonContext.getThreadLocalCarbonContext().setTenantId(2);
-            String tenantTwo = (String) find.invoke(connector, "Users", "externalId", "same-stable-id");
+            // CarbonContext intentionally prevents changing tenant identity within
+            // one request thread. Simulate a second WSO2 request on a fresh thread.
+            var tenantPool = Executors.newSingleThreadExecutor();
+            String tenantTwo;
+            try {
+                Future<String> secondTenant = tenantPool.submit(() -> {
+                    PrivilegedCarbonContext.getThreadLocalCarbonContext().setTenantId(2);
+                    try {
+                        return (String) find.invoke(connector, "Users", "externalId", "same-stable-id");
+                    } catch (Exception e) {
+                        throw new RuntimeException(e);
+                    }
+                });
+                tenantTwo = secondTenant.get();
+            } finally {
+                tenantPool.shutdownNow();
+            }
             if (searches.get() != 2 || tenantOne.equals(tenantTwo)) {
                 throw new IllegalStateException("SCIM resource ID cache entries must be isolated by WSO2 tenant.");
             }
