@@ -138,6 +138,17 @@ public final class StalwartSCIMFactorySmokeTest {
             if (creates.size() != 2 || !creates.get(1).get("active").getAsBoolean()) {
                 throw new IllegalStateException("A user with Email membership and an allowing active claim should be active.");
             }
+
+            Map<ClaimMapping, List<String>> disabled = claims(
+                    "http://wso2.org/claims/emailaddress", "disabled@example.test",
+                    "http://wso2.org/claims/username", "stable-disabled",
+                    "http://wso2.org/claims/accountEnabled", "false",
+                    IdentityProvisioningConstants.GROUP_CLAIM_URI, "Email");
+            connector.provision(new ProvisioningEntity(ProvisioningEntityType.USER, "stable-disabled",
+                    ProvisioningOperation.POST, disabled));
+            if (creates.size() != 3 || creates.get(2).get("active").getAsBoolean()) {
+                throw new IllegalStateException("A false Active Claim must disable an otherwise Email-entitled account.");
+            }
         } finally {
             server.stop(0);
         }
