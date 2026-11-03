@@ -190,6 +190,10 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
                 throw new IdentityProvisioningException(
                         "Profile update SCIM URL must be an absolute HTTP(S) URL ending with /scim/v2.");
             }
+            if (!sameOrigin(endpoint, profileEndpoint)) {
+                throw new IdentityProvisioningException(
+                        "Profile update SCIM URL must use the same origin as the primary SCIM URL; the bearer token cannot be forwarded to another host.");
+            }
         }
         if (bearerToken.indexOf('\r') >= 0 || bearerToken.indexOf('\n') >= 0) {
             throw new IdentityProvisioningException("Stalwart SCIM bearer token contains an invalid line break.");
@@ -594,16 +598,26 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
     private String findResourceId(String resource, String attribute, String value)
             throws IdentityProvisioningException {
         if (StringUtils.isBlank(value)) return null;
+        int tenantId = currentTenantId();
         String cacheKey = cacheKey(resource, attribute, value);
-        CacheEntry cached = RESOURCE_ID_CACHE.get(cacheKey);
-        if (cached != null) {
-            if (cached.isValid()) return cached.id;
-            RESOURCE_ID_CACHE.remove(cacheKey, cached);
+        if (tenantId >= 0) {
+            CacheEntry cached = RESOURCE_ID_CACHE.get(cacheKey);
+            if (cached != null) {
+                if (cached.isValid()) return cached.id;
+                RESOURCE_ID_CACHE.remove(cacheKey, cached);
+            }
         }
+        // POST .search keeps email addresses and external identifiers out of
+        // request URLs, reverse-proxy access logs and URI telemetry.
         String filter = normalizeScimFilter(attribute + " Eq " + value);
-        String query = "?filter=" + URLEncoder.encode(filter, StandardCharsets.UTF_8) + "&count=2"
-                + ("Groups".equals(resource) ? "&excludedAttributes=members" : "");
-        JsonObject response = request("GET", "/" + resource + query, null);
+        JsonObject search = new JsonObject();
+        JsonArray schemas = new JsonArray();
+        schemas.add(SEARCH_SCHEMA);
+        search.add("schemas", schemas);
+        search.addProperty("filter", filter);
+        search.addProperty("count", 2);
+        if ("Groups".equals(resource)) search.addProperty("excludedAttributes", "members");
+        JsonObject response = requestAtIndividual(baseUrl, "POST", "/" + resource + "/.search", search);
         JsonArray resources = response.has("Resources") && response.get("Resources").isJsonArray()
                 ? response.getAsJsonArray("Resources") : new JsonArray();
         if (resources.isEmpty()) return null;
@@ -629,16 +643,22 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
         }
     }
 
+    private int currentTenantId() {
+        try {
+            return PrivilegedCarbonContext.getThreadLocalCarbonContext().getTenantId();
+        } catch (RuntimeException e) {
+            return -1;
+        }
+    }
+
     private String cacheKey(String resource, String attribute, String value) {
-        // Different provisioning principals can see different tenant-scoped IDs
-        // even when they share the same SCIM host.
-        return baseUrl + "|" + String.valueOf(userStoreDomainName) + "|"
-                + tokenFingerprint(bearerToken) + "|"
-                + resource + "|" + attribute + "|" + value.trim().toLowerCase(java.util.Locale.ROOT);
+        return currentTenantId() + "|" + baseUrl + "|" + String.valueOf(userStoreDomainName) + "|"
+                + tokenFingerprint(bearerToken) + "|" + resource + "|" + attribute + "|"
+                + value.trim().toLowerCase(java.util.Locale.ROOT);
     }
 
     private void cacheResourceId(String resource, String attribute, String value, String id) {
-        if (StringUtils.isBlank(value) || StringUtils.isBlank(id)) return;
+        if (currentTenantId() < 0 || StringUtils.isBlank(value) || StringUtils.isBlank(id)) return;
         RESOURCE_ID_CACHE.put(cacheKey(resource, attribute, value), new CacheEntry(id));
         if (RESOURCE_ID_CACHE.size() > 10000) { long now = System.currentTimeMillis(); RESOURCE_ID_CACHE.entrySet().removeIf(entry -> entry.getValue().expiresAt <= now); }
     }
@@ -656,6 +676,31 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
 
     private String profileUpdateBaseUrl() {
         return enableProfileUpdates && StringUtils.isNotBlank(profileUpdateScimUrl) ? profileUpdateScimUrl : baseUrl;
+    }
+
+    private boolean sameOrigin(URI left, URI right) {
+        if (left == null || right == null || left.getHost() == null || right.getHost() == null) return false;
+        return left.getScheme().equalsIgnoreCase(right.getScheme())
+                && left.getHost().equalsIgnoreCase(right.getHost())
+                && effectivePort(left) == effectivePort(right);
+    }
+
+    private int effectivePort(URI uri) {
+        if (uri.getPort() >= 0) return uri.getPort();
+        return "https".equalsIgnoreCase(uri.getScheme()) ? 443 : 80;
+    }
+
+    private Boolean activeClaimState(Map<ClaimMapping, List<String>> attrs)
+            throws IdentityProvisioningException {
+        String value = mappedValue(attrs, activeClaimUri);
+        if (StringUtils.isBlank(value)) return null;
+        boolean parsed = parseBooleanClaim(value, activeClaimUri);
+        return invertActiveClaim ? !parsed : parsed;
+    }
+
+    private boolean activeClaimAllows(Map<ClaimMapping, List<String>> attrs)
+            throws IdentityProvisioningException {
+        return !Boolean.FALSE.equals(activeClaimState(attrs));
     }
 
     private JsonObject request(String method, String path, JsonObject body) throws IdentityProvisioningException {
@@ -718,7 +763,9 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
             if (bulkFallbackToIndividual) return requestAtIndividual(endpointBaseUrl, method, path, body);
             throw new IdentityProvisioningException("Stalwart SCIM Bulk endpoint is unavailable.");
         }
-        String key = endpointBaseUrl + "|" + tokenFingerprint(bearerToken) + "|" + bulkMaxPayloadBytes + "|" + bulkRequestTimeoutMs + "|" + bulkFallbackToIndividual;
+        String key = currentTenantId() + "|" + String.valueOf(userStoreDomainName) + "|"
+                + endpointBaseUrl + "|" + tokenFingerprint(bearerToken) + "|"
+                + bulkMaxPayloadBytes + "|" + bulkRequestTimeoutMs + "|" + bulkFallbackToIndividual;
         if (!BULK_PENDING_PERMITS.tryAcquire()) {
             throw new IdentityProvisioningException("The in-memory SCIM Bulk pending-operation limit has been reached; retry after current requests complete.");
         }
@@ -1191,7 +1238,9 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
                 case StalwartSCIMProvisioningConnectorConstants.BULK_FALLBACK_TO_INDIVIDUAL -> bulkFallbackToIndividual = parseTomlBoolean(entry);
                 case StalwartSCIMProvisioningConnectorConstants.BULK_REQUEST_TIMEOUT_MS -> bulkRequestTimeoutMs = parseTomlInteger(entry);
                 case StalwartSCIMProvisioningConnectorConstants.BULK_MAX_PAYLOAD_BYTES -> bulkMaxPayloadBytes = parseTomlInteger(entry);
-                default -> log.debug("Ignoring unknown key in [stalwart-scim] TOML section: " + entry.getKey());
+                default -> throw new IdentityProvisioningException(
+                        "Unknown key in [stalwart-scim] TOML section: " + entry.getKey()
+                                + ". Check the key name; refusing to silently ignore a configuration typo.");
             }
         }
     }
