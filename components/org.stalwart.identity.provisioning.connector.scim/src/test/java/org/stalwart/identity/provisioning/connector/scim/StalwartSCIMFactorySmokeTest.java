@@ -41,11 +41,11 @@ public final class StalwartSCIMFactorySmokeTest {
         Path conf = home.resolve("repository/conf");
         Files.createDirectories(conf);
         Files.writeString(conf.resolve("stalwart-scim-connector.toml"),
-                "[stalwart-scim]\\n" +
-                "scim-base-url = \"https://mail.example.test/scim/v2\"\\n" +
-                "scim-bearer-token = \"toml-token\"\\n" +
-                "provisioning-mode = \"BULK\"\\n" +
-                "bulk-request-timeout-ms = 45000\\n");
+                "[stalwart-scim]\n" +
+                "scim-base-url = \"https://mail.example.test/scim/v2\"\n" +
+                "scim-bearer-token = \"toml-token\"\n" +
+                "provisioning-mode = \"BULK\"\n" +
+                "bulk-request-timeout-ms = 45000\n");
         String previous = System.getProperty("carbon.home");
         System.setProperty("carbon.home", home.toString());
         try {
