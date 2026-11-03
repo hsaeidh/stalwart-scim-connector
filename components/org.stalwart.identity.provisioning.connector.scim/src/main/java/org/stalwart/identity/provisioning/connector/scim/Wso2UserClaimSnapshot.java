@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2026, IRISA.
+ * Copyright (c) 2026, the contributors.
  * Licensed under the Apache License, Version 2.0.
  */
 package org.stalwart.identity.provisioning.connector.scim;

@@ -23,6 +23,7 @@ import org.wso2.carbon.identity.provisioning.ProvisionedIdentifier;
 import org.wso2.carbon.identity.provisioning.ProvisioningEntity;
 import org.wso2.carbon.identity.provisioning.ProvisioningEntityType;
 import org.wso2.carbon.identity.provisioning.ProvisioningUtil;
+import org.wso2.carbon.context.PrivilegedCarbonContext;
 
 import java.io.IOException;
 import java.net.URI;
@@ -58,6 +59,7 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
 
     private static final String USER_SCHEMA = "urn:ietf:params:scim:schemas:core:2.0:User";
     private static final String PATCH_SCHEMA = "urn:ietf:params:scim:api:messages:2.0:PatchOp";
+    private static final String SEARCH_SCHEMA = "urn:ietf:params:scim:api:messages:2.0:SearchRequest";
     private static final String USERNAME_CLAIM = IdentityProvisioningConstants.USERNAME_CLAIM_URI;
     private static final String DEFAULT_EXTERNAL_ID_CLAIM_URI = "http://wso2.org/claims/username";
     private static final HttpClient HTTP_CLIENT = HttpClient.newBuilder()
@@ -188,6 +190,10 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
                 throw new IdentityProvisioningException(
                         "Profile update SCIM URL must be an absolute HTTP(S) URL ending with /scim/v2.");
             }
+            if (!sameOrigin(endpoint, profileEndpoint)) {
+                throw new IdentityProvisioningException(
+                        "Profile update SCIM URL must use the same origin as the primary SCIM URL; the bearer token cannot be forwarded to another host.");
+            }
         }
         if (bearerToken.indexOf('\r') >= 0 || bearerToken.indexOf('\n') >= 0) {
             throw new IdentityProvisioningException("Stalwart SCIM bearer token contains an invalid line break.");
@@ -250,15 +256,14 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
         List<String> initialGroups = groupNames(attrs);
         boolean emailEntitled = initialGroups != null
                 && initialGroups.stream().anyMatch(this::isEmailMembershipGroup);
+        boolean activeClaimAllows = !emailEntitled || activeClaimAllows(attrs, entity.getEntityName());
         // WSO2 can retry a failed provisioning event. Reuse an existing account so
         // a later group-membership failure does not cause a duplicate-user conflict.
         if (existingId == null) {
             JsonObject user = userPayload(attrs, userName, externalId);
-            // Email entitlement takes precedence over a mapped active claim. Fold it
-            // into the create document instead of issuing a redundant follow-up PATCH.
-            if (emailEntitled) {
-                user.addProperty("active", true);
-            }
+            // Fail closed: account activation requires positive Email-group membership.
+            // An optional active claim may further disable access, but can never grant it.
+            user.addProperty("active", emailEntitled && activeClaimAllows);
             JsonObject created = request("POST", "/Users", user);
             if (!created.has("id")) {
                 // A concurrent create may win between the preflight lookup and POST.
@@ -268,15 +273,13 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
                     throw new IdentityProvisioningException(
                             "Stalwart accepted no identifiable User resource after POST; provisioning outcome is unresolved.");
                 }
-                updateUser(entity, emailEntitled);
-            } else {
-                // Initial memberships are applied once, after successful account creation.
-                }
+                updateUser(entity, initialGroups == null ? null : emailEntitled);
+            }
         } else {
             log.info("Stalwart user already exists; reconciling attributes and membership deltas.");
             // Reconciliation must not require the current email claim. The stable
             // externalId resolved the existing Stalwart account above.
-            updateUser(entity, emailEntitled);
+            updateUser(entity, initialGroups == null ? null : emailEntitled);
         }
     }
 
@@ -302,18 +305,32 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
     }
 
     private void updateUser(ProvisioningEntity entity) throws IdentityProvisioningException {
-        updateUser(entity, false);
+        updateUser(entity, null);
     }
 
-    private void updateUser(ProvisioningEntity entity, boolean forceEmailEntitlement)
+    /**
+     * A non-null membership snapshot is authoritative (true or false). Null means
+     * the event did not carry the complete current group list, so only explicit
+     * Email-group deltas may grant/revoke access.
+     */
+    private void updateUser(ProvisioningEntity entity, Boolean emailMembershipSnapshot)
             throws IdentityProvisioningException {
         Map<ClaimMapping, List<String>> attrs = entity.getAttributes();
+        // WSO2 role-list update events include the complete current group list
+        // as well as NEW_GROUP/DELETED_GROUP deltas. Prefer that authoritative
+        // snapshot whenever present; it closes the gate even if a delta is lost.
+        if (emailMembershipSnapshot == null) {
+            List<String> currentGroups = groupNames(attrs);
+            if (currentGroups != null) {
+                emailMembershipSnapshot = currentGroups.stream().anyMatch(this::isEmailMembershipGroup);
+            }
+        }
         // Email address, aliases and the WSO2 local username are deliberately
         // outside the Stalwart synchronization contract. If an update contains
         // no supported profile, active-state or group-membership delta, return
         // before performing even a SCIM lookup. In particular, never resolve a
         // changed externalId by falling back to a mutable email address.
-        if (!forceEmailEntitlement && !hasSupportedUpdate(attrs)) {
+        if (emailMembershipSnapshot == null && !hasSupportedUpdate(attrs)) {
             log.debug("Ignoring WSO2 update with no supported Stalwart changes "
                     + "(primary email, aliases, local username and unsupported claims are not synchronized).");
             return;
@@ -328,7 +345,9 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
                 && newGroups.stream().anyMatch(this::isEmailMembershipGroup);
         if (emailMembershipAdded && findUserId(attrs, entity.getEntityName()) == null) {
             String stableId = targetUserIdentifier(attrs, entity.getEntityName());
-            request("POST", "/Users", userPayload(attrs, targetUserName(attrs, entity.getEntityName()), stableId));
+            JsonObject newUser = userPayload(attrs, targetUserName(attrs, entity.getEntityName()), stableId);
+            newUser.addProperty("active", activeClaimAllows(attrs, entity.getEntityName()));
+            request("POST", "/Users", newUser);
         }
         JsonObject profilePatch = userPatch(attrs, enableProfileUpdates, entity.getEntityName());
         if (profilePatch.getAsJsonArray("Operations").size() > 0) {
@@ -340,18 +359,17 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
                         "Stalwart user was not found for update; stable externalId lookup failed.");
             }
         }
-        // Compute one effective active value. Email entitlement has precedence
-        // over the independently mapped active claim, and exactly one PATCH is sent.
-        String activeClaim = mappedValue(attrs, activeClaimUri);
+        // Email membership is the mandatory authorization gate. The optional
+        // active claim can only revoke access; it cannot independently grant it.
         Boolean desiredActive = null;
-        if (StringUtils.isNotBlank(activeClaim)) {
-            boolean activeValue = parseBooleanClaim(activeClaim, activeClaimUri);
-            desiredActive = invertActiveClaim ? !activeValue : activeValue;
-        }
-        if (forceEmailEntitlement) {
-            desiredActive = true;
-        } else if (emailMembershipRemoved || emailMembershipAdded) {
-            desiredActive = !emailMembershipRemoved;
+        if (emailMembershipSnapshot != null) {
+            desiredActive = emailMembershipSnapshot && activeClaimAllows(attrs, entity.getEntityName());
+        } else if (emailMembershipRemoved) {
+            desiredActive = false;
+        } else if (emailMembershipAdded) {
+            desiredActive = activeClaimAllows(attrs, entity.getEntityName());
+        } else if (Boolean.FALSE.equals(activeClaimState(attrs))) {
+            desiredActive = false;
         }
         if (desiredActive != null) {
             setStalwartActive(attrs, entity.getEntityName(), desiredActive);
@@ -360,9 +378,9 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
 
     private boolean hasSupportedUpdate(Map<ClaimMapping, List<String>> attrs) {
         if (attrs == null || attrs.isEmpty()) return false;
-        return StringUtils.isNotBlank(mappedValue(attrs, givenNameClaimUri))
-                || StringUtils.isNotBlank(mappedValue(attrs, familyNameClaimUri))
-                || StringUtils.isNotBlank(mappedValue(attrs, displayNameClaimUri))
+        return mappedValue(attrs, givenNameClaimUri) != null
+                || mappedValue(attrs, familyNameClaimUri) != null
+                || mappedValue(attrs, displayNameClaimUri) != null
                 || StringUtils.isNotBlank(mappedValue(attrs, activeClaimUri))
                 || CollectionUtils.isNotEmpty(claimValues(attrs, IdentityProvisioningConstants.NEW_GROUP_CLAIM_URI))
                 || CollectionUtils.isNotEmpty(claimValues(attrs, IdentityProvisioningConstants.DELETED_GROUP_CLAIM_URI));
@@ -428,11 +446,9 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
             user.addProperty("displayName", StringUtils.defaultIfBlank(given, family).trim());
         }
         // Email aliases are intentionally not provisioned. The primary address is immutable after creation.
-        String active = mappedValue(attrs, activeClaimUri);
-        if (StringUtils.isNotBlank(active)) {
-            boolean activeValue = parseBooleanClaim(active, activeClaimUri);
-            user.addProperty("active", invertActiveClaim ? !activeValue : activeValue);
-        }
+        // Creation is always fail-closed. Callers must explicitly prove
+        // Email-group membership before changing this to true.
+        user.addProperty("active", false);
         return user;
     }
 
@@ -446,7 +462,10 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
         String given = mappedValue(attrs, givenNameClaimUri);
         String family = mappedValue(attrs, familyNameClaimUri);
         String display = mappedValue(attrs, displayNameClaimUri);
-        if (includeProfile && (StringUtils.isNotBlank(given) || StringUtils.isNotBlank(family))) {
+        if (includeProfile && display != null) {
+            // An explicitly supplied blank displayName is a clear operation.
+            addReplace(operations, "displayName", StringUtils.defaultString(display).trim());
+        } else if (includeProfile && (given != null || family != null)) {
             String lookupName = entityName;
             if (StringUtils.isNotBlank(userStoreDomainName) && StringUtils.isNotBlank(lookupName)
                     && lookupName.indexOf('/') < 0) {
@@ -455,22 +474,18 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
             try {
                 Map<String, String> snapshot = Wso2UserClaimSnapshot.read(lookupName,
                         new String[]{givenNameClaimUri, familyNameClaimUri});
-                if (!snapshot.containsKey(givenNameClaimUri) || !snapshot.containsKey(familyNameClaimUri)) {
-                    throw new IdentityProvisioningException(
-                            "The current WSO2 UserStore snapshot did not include both FIRSTNAME and LASTNAME claims.");
-                }
-                String currentGiven = snapshot.get(givenNameClaimUri);
-                String currentFamily = snapshot.get(familyNameClaimUri);
+                // A missing UserStore claim is a legitimate empty value.
+                String currentGiven = snapshot.getOrDefault(givenNameClaimUri, "");
+                String currentFamily = snapshot.getOrDefault(familyNameClaimUri, "");
                 String composed = joinName(currentGiven, currentFamily);
-                if (StringUtils.isNotBlank(composed)) addReplace(operations, "displayName", composed);
+                // Empty composed values intentionally clear Stalwart displayName.
+                addReplace(operations, "displayName", composed);
             } catch (IdentityProvisioningException e) {
                 throw e;
             } catch (Exception e) {
                 throw new IdentityProvisioningException(
                         "Unable to read the complete current FIRSTNAME/LASTNAME snapshot from WSO2 UserStore.", e);
             }
-        } else if (includeProfile && StringUtils.isNotBlank(display)) {
-            addReplace(operations, "displayName", display.trim());
         }
 
         return patchDocument(operations);
@@ -478,7 +493,14 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
 
     private String targetUserIdentifier(Map<ClaimMapping, List<String>> attrs, String fallback) {
         String externalId = mappedValue(attrs, externalIdClaimUri);
-        return StringUtils.isNotBlank(externalId) ? externalId : fallback;
+        if (StringUtils.isNotBlank(externalId)) {
+            return stripUserStoreDomain(externalId.trim());
+        }
+        // The entity name is only a fallback when it is a stable local username,
+        // never when it is the mutable primary email address.
+        if (!DEFAULT_EXTERNAL_ID_CLAIM_URI.equals(externalIdClaimUri)
+                || StringUtils.isBlank(fallback) || fallback.indexOf('@') >= 0) return null;
+        return stripUserStoreDomain(fallback.trim());
     }
 
     private static String joinName(String given, String family) {
@@ -524,7 +546,9 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
         // WSO2 DELETE/UPDATE events can omit the mapped claim map while retaining
         // entityName as the local username. In this connector's default mapping,
         // that local username is the immutable Stalwart externalId, not userName.
-        if (StringUtils.isBlank(externalId) && StringUtils.isNotBlank(fallback)) {
+        if (StringUtils.isBlank(externalId)
+                && DEFAULT_EXTERNAL_ID_CLAIM_URI.equals(externalIdClaimUri)
+                && StringUtils.isNotBlank(fallback)) {
             String candidate = stripUserStoreDomain(fallback.trim());
             if (StringUtils.isNotBlank(candidate) && candidate.indexOf('@') < 0) {
                 String id = findResourceId("Users", "externalId", candidate);
@@ -540,37 +564,8 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
         if (StringUtils.isNotBlank(externalId)) {
             return findResourceId("Users", "externalId", externalId);
         }
-        // Email lookup is a legacy fallback only when no stable local identifier
-        // is available; numeric/bare WSO2 usernames are never treated as email.
-        String userName = mappedValue(attrs, userNameClaimUri);
-        if (StringUtils.isBlank(userName) && StringUtils.isNotBlank(fallback)
-                && fallback.trim().contains("@")) {
-            userName = fallback.trim();
-        }
-        if (StringUtils.isBlank(userName)) return null;
-        userName = userName.trim();
-        if (!userName.matches("^[^\\s@]+@[^\\s@]+$")) {
-            throw new IdentityProvisioningException(
-                    "Stalwart SCIM userName fallback must be a full email address.");
-        }
-        return findResourceId("Users", "userName", userName);
-    }
-
-    private String findUserIdByIdentifier(String identifier) throws IdentityProvisioningException {
-        if (StringUtils.isBlank(identifier)) return null;
-        String candidate = stripUserStoreDomain(identifier);
-        String id = findResourceId("Users", "externalId", candidate);
-        if (id == null && !candidate.equals(identifier)) {
-            id = findResourceId("Users", "externalId", identifier);
-        }
-        if (id != null) return id;
-        // Email identifiers can legitimately be supplied by legacy group claims;
-        // numeric/stable identifiers are externalId and need no username fallback.
-        if (candidate.indexOf('@') >= 0) {
-            id = findResourceId("Users", "userName", candidate);
-            return id != null ? id : (candidate.equals(identifier) ? null
-                    : findResourceId("Users", "userName", identifier));
-        }
+        // Never resolve an update by mutable email. If the immutable externalId
+        // is unavailable, fail closed rather than risk adopting another account.
         return null;
     }
 
@@ -587,16 +582,26 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
     private String findResourceId(String resource, String attribute, String value)
             throws IdentityProvisioningException {
         if (StringUtils.isBlank(value)) return null;
+        int tenantId = currentTenantId();
         String cacheKey = cacheKey(resource, attribute, value);
-        CacheEntry cached = RESOURCE_ID_CACHE.get(cacheKey);
-        if (cached != null) {
-            if (cached.isValid()) return cached.id;
-            RESOURCE_ID_CACHE.remove(cacheKey, cached);
+        if (tenantId != -1) {
+            CacheEntry cached = RESOURCE_ID_CACHE.get(cacheKey);
+            if (cached != null) {
+                if (cached.isValid()) return cached.id;
+                RESOURCE_ID_CACHE.remove(cacheKey, cached);
+            }
         }
+        // POST .search keeps email addresses and external identifiers out of
+        // request URLs, reverse-proxy access logs and URI telemetry.
         String filter = normalizeScimFilter(attribute + " Eq " + value);
-        String query = "?filter=" + URLEncoder.encode(filter, StandardCharsets.UTF_8) + "&count=2"
-                + ("Groups".equals(resource) ? "&excludedAttributes=members" : "");
-        JsonObject response = request("GET", "/" + resource + query, null);
+        JsonObject search = new JsonObject();
+        JsonArray schemas = new JsonArray();
+        schemas.add(SEARCH_SCHEMA);
+        search.add("schemas", schemas);
+        search.addProperty("filter", filter);
+        search.addProperty("count", 2);
+        if ("Groups".equals(resource)) search.addProperty("excludedAttributes", "members");
+        JsonObject response = requestAtIndividual(baseUrl, "POST", "/" + resource + "/.search", search);
         JsonArray resources = response.has("Resources") && response.get("Resources").isJsonArray()
                 ? response.getAsJsonArray("Resources") : new JsonArray();
         if (resources.isEmpty()) return null;
@@ -622,16 +627,22 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
         }
     }
 
+    private int currentTenantId() {
+        try {
+            return PrivilegedCarbonContext.getThreadLocalCarbonContext().getTenantId();
+        } catch (RuntimeException e) {
+            return -1;
+        }
+    }
+
     private String cacheKey(String resource, String attribute, String value) {
-        // Different provisioning principals can see different tenant-scoped IDs
-        // even when they share the same SCIM host.
-        return baseUrl + "|" + String.valueOf(userStoreDomainName) + "|"
-                + tokenFingerprint(bearerToken) + "|"
-                + resource + "|" + attribute + "|" + value.trim().toLowerCase(java.util.Locale.ROOT);
+        return currentTenantId() + "|" + baseUrl + "|" + String.valueOf(userStoreDomainName) + "|"
+                + tokenFingerprint(bearerToken) + "|" + resource + "|" + attribute + "|"
+                + value.trim().toLowerCase(java.util.Locale.ROOT);
     }
 
     private void cacheResourceId(String resource, String attribute, String value, String id) {
-        if (StringUtils.isBlank(value) || StringUtils.isBlank(id)) return;
+        if (currentTenantId() == -1 || StringUtils.isBlank(value) || StringUtils.isBlank(id)) return;
         RESOURCE_ID_CACHE.put(cacheKey(resource, attribute, value), new CacheEntry(id));
         if (RESOURCE_ID_CACHE.size() > 10000) { long now = System.currentTimeMillis(); RESOURCE_ID_CACHE.entrySet().removeIf(entry -> entry.getValue().expiresAt <= now); }
     }
@@ -649,6 +660,58 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
 
     private String profileUpdateBaseUrl() {
         return enableProfileUpdates && StringUtils.isNotBlank(profileUpdateScimUrl) ? profileUpdateScimUrl : baseUrl;
+    }
+
+    private boolean sameOrigin(URI left, URI right) {
+        if (left == null || right == null || left.getHost() == null || right.getHost() == null) return false;
+        return left.getScheme().equalsIgnoreCase(right.getScheme())
+                && left.getHost().equalsIgnoreCase(right.getHost())
+                && effectivePort(left) == effectivePort(right);
+    }
+
+    private int effectivePort(URI uri) {
+        if (uri.getPort() >= 0) return uri.getPort();
+        return "https".equalsIgnoreCase(uri.getScheme()) ? 443 : 80;
+    }
+
+    private Boolean activeClaimState(Map<ClaimMapping, List<String>> attrs)
+            throws IdentityProvisioningException {
+        String value = mappedValue(attrs, activeClaimUri);
+        if (StringUtils.isBlank(value)) return null;
+        boolean parsed = parseBooleanClaim(value, activeClaimUri);
+        return invertActiveClaim ? !parsed : parsed;
+    }
+
+    private boolean activeClaimAllows(Map<ClaimMapping, List<String>> attrs, String fallbackUserName)
+            throws IdentityProvisioningException {
+        if (StringUtils.isBlank(activeClaimUri)) return true;
+        Boolean state = activeClaimState(attrs);
+        if (state != null) return state;
+
+        // Group-membership events often carry only NEW_GROUP/DELETED_GROUP claims.
+        // If an Active Claim is configured, read its authoritative current value
+        // from WSO2 instead of silently treating a missing value as enabled.
+        String lookupName = fallbackUserName;
+        if (StringUtils.isNotBlank(userStoreDomainName) && StringUtils.isNotBlank(lookupName)
+                && lookupName.indexOf('/') < 0) {
+            lookupName = userStoreDomainName.trim() + "/" + lookupName.trim();
+        }
+        try {
+            Map<String, String> snapshot = Wso2UserClaimSnapshot.read(
+                    lookupName, new String[]{activeClaimUri});
+            String value = snapshot.get(activeClaimUri);
+            if (StringUtils.isBlank(value)) {
+                throw new IdentityProvisioningException(
+                        "Configured Active Claim is missing from the WSO2 UserStore; refusing to activate the Stalwart account.");
+            }
+            boolean parsed = parseBooleanClaim(value, activeClaimUri);
+            return invertActiveClaim ? !parsed : parsed;
+        } catch (IdentityProvisioningException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new IdentityProvisioningException(
+                    "Unable to read the configured Active Claim from the current WSO2 UserStore.", e);
+        }
     }
 
     private JsonObject request(String method, String path, JsonObject body) throws IdentityProvisioningException {
@@ -679,11 +742,22 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
         ScheduledFuture<?> scheduled;
     }
     private static final ConcurrentMap<String, BulkBatch> BULK_BATCHES = new ConcurrentHashMap<>();
-    private static final ScheduledExecutorService BULK_DISPATCHER = Executors.newScheduledThreadPool(2, task -> {
-        Thread thread = new Thread(task, "stalwart-scim-bulk-dispatcher");
-        thread.setDaemon(true);
-        return thread;
-    });
+    private static volatile ScheduledExecutorService BULK_DISPATCHER = createBulkDispatcher();
+
+    private static ScheduledExecutorService createBulkDispatcher() {
+        return Executors.newScheduledThreadPool(2, task -> {
+            Thread thread = new Thread(task, "stalwart-scim-bulk-dispatcher");
+            thread.setDaemon(true);
+            return thread;
+        });
+    }
+
+    private static synchronized ScheduledExecutorService bulkDispatcher() {
+        if (BULK_DISPATCHER.isShutdown() || BULK_DISPATCHER.isTerminated()) {
+            BULK_DISPATCHER = createBulkDispatcher();
+        }
+        return BULK_DISPATCHER;
+    }
     private static final int BULK_BATCH_MAX_OPERATIONS = 100;
     private static final int BULK_PENDING_LIMIT = 5000;
     private static final Semaphore BULK_PENDING_PERMITS = new Semaphore(BULK_PENDING_LIMIT, true);
@@ -707,11 +781,18 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
     /** Short in-memory micro-batching. Every caller waits for its own Stalwart operation result. */
     private JsonObject requestBulkAt(String endpointBaseUrl, String method, String path, JsonObject body)
             throws IdentityProvisioningException {
+        // Never share an in-memory batch across requests whose WSO2 tenant context
+        // cannot be identified. In that rare case, retain correctness via Individual mode.
+        if (currentTenantId() == -1) {
+            return requestAtIndividual(endpointBaseUrl, method, path, body);
+        }
         if (bulkUnsupported) {
             if (bulkFallbackToIndividual) return requestAtIndividual(endpointBaseUrl, method, path, body);
             throw new IdentityProvisioningException("Stalwart SCIM Bulk endpoint is unavailable.");
         }
-        String key = endpointBaseUrl + "|" + tokenFingerprint(bearerToken) + "|" + bulkMaxPayloadBytes + "|" + bulkRequestTimeoutMs + "|" + bulkFallbackToIndividual;
+        String key = currentTenantId() + "|" + String.valueOf(userStoreDomainName) + "|"
+                + endpointBaseUrl + "|" + tokenFingerprint(bearerToken) + "|"
+                + bulkMaxPayloadBytes + "|" + bulkRequestTimeoutMs + "|" + bulkFallbackToIndividual;
         if (!BULK_PENDING_PERMITS.tryAcquire()) {
             throw new IdentityProvisioningException("The in-memory SCIM Bulk pending-operation limit has been reached; retry after current requests complete.");
         }
@@ -719,14 +800,21 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
         pending.result.whenComplete((result, error) -> BULK_PENDING_PERMITS.release());
         BulkBatch batch = BULK_BATCHES.computeIfAbsent(key, ignored -> new BulkBatch());
         synchronized (batch) {
-            batch.operations.add(pending);
-            if (batch.scheduled == null) {
-                batch.scheduled = BULK_DISPATCHER.schedule(() -> flushBulkBatch(key, batch),
-                        BULK_BATCH_WINDOW_MS, TimeUnit.MILLISECONDS);
-            }
-            if (batch.operations.size() >= BULK_BATCH_MAX_OPERATIONS) {
-                batch.scheduled.cancel(false);
-                batch.scheduled = BULK_DISPATCHER.schedule(() -> flushBulkBatch(key, batch), 0, TimeUnit.MILLISECONDS);
+            try {
+                batch.operations.add(pending);
+                if (batch.scheduled == null) {
+                    batch.scheduled = bulkDispatcher().schedule(() -> flushBulkBatch(key, batch),
+                            BULK_BATCH_WINDOW_MS, TimeUnit.MILLISECONDS);
+                }
+                if (batch.operations.size() >= BULK_BATCH_MAX_OPERATIONS) {
+                    batch.scheduled.cancel(false);
+                    batch.scheduled = bulkDispatcher().schedule(() -> flushBulkBatch(key, batch), 0, TimeUnit.MILLISECONDS);
+                }
+            } catch (RuntimeException e) {
+                batch.operations.remove(pending);
+                pending.result.completeExceptionally(new IdentityProvisioningException(
+                        "Unable to schedule the in-memory SCIM Bulk operation.", e));
+                if (batch.operations.isEmpty()) BULK_BATCHES.remove(key, batch);
             }
         }
         try {
@@ -770,7 +858,7 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
         if (!chunk.isEmpty()) owner.sendBulkChunk(chunk);
         synchronized (batch) {
             if (!batch.operations.isEmpty() && batch.scheduled == null) {
-                batch.scheduled = BULK_DISPATCHER.schedule(() -> flushBulkBatch(key, batch),
+                batch.scheduled = bulkDispatcher().schedule(() -> flushBulkBatch(key, batch),
                         BULK_BATCH_WINDOW_MS, TimeUnit.MILLISECONDS);
             } else if (batch.operations.isEmpty()) {
                 BULK_BATCHES.remove(key, batch);
@@ -807,12 +895,22 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
             }
             return;
         }
-        HttpRequest httpRequest = HttpRequest.newBuilder().uri(URI.create(batch.get(0).endpoint + "/Bulk"))
-                .timeout(Duration.ofMillis(bulkRequestTimeoutMs)).header("Authorization", "Bearer " + bearerToken)
-                .header("Accept", "application/scim+json").header("Content-Type", "application/scim+json")
-                .POST(HttpRequest.BodyPublishers.ofString(payload)).build();
         try {
-            HttpResponse<String> response = sendWithLimit(httpRequest);
+            HttpRequest httpRequest = HttpRequest.newBuilder().uri(URI.create(batch.get(0).endpoint + "/Bulk"))
+                    .timeout(Duration.ofMillis(bulkRequestTimeoutMs)).header("Authorization", "Bearer " + bearerToken)
+                    .header("Accept", "application/scim+json").header("Content-Type", "application/scim+json")
+                    .POST(HttpRequest.BodyPublishers.ofString(payload)).build();
+            HttpResponse<String> response = null;
+            for (int attempt = 1; attempt <= 3; attempt++) {
+                response = sendWithLimit(httpRequest);
+                int status = response.statusCode();
+                if ((status == 408 || status == 429 || status >= 500)
+                        && attempt < 3 && isBulkRetrySafe(batch)) {
+                    retryBackoff(attempt, response.headers().firstValue("Retry-After").orElse(null));
+                    continue;
+                }
+                break;
+            }
             int httpStatus = response.statusCode();
             if ((httpStatus == 404 || httpStatus == 405 || httpStatus == 501) && bulkFallbackToIndividual) {
                 bulkUnsupported = true;
@@ -856,6 +954,8 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
                             "Stalwart SCIM Bulk operation failed with HTTP " + status + "."));
                 }
             }
+        } catch (IdentityProvisioningException e) {
+            for (PendingBulkOperation item : batch) item.result.completeExceptionally(e);
         } catch (IOException e) {
             for (PendingBulkOperation item : batch) {
                 try {
@@ -878,6 +978,21 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
             IdentityProvisioningException failure = new IdentityProvisioningException("Invalid Stalwart Bulk response.", e);
             for (PendingBulkOperation item : batch) item.result.completeExceptionally(failure);
         }
+    }
+
+    private boolean isBulkRetrySafe(List<PendingBulkOperation> batch) {
+        for (PendingBulkOperation item : batch) {
+            if ("POST".equalsIgnoreCase(item.method)) {
+                if (!"/Users".equals(item.path) || item.body == null
+                        || !item.body.has("externalId")
+                        || StringUtils.isBlank(item.body.get("externalId").getAsString())) return false;
+            } else if ("PATCH".equalsIgnoreCase(item.method)) {
+                if (!isIdempotentPatch(item.body)) return false;
+            } else if (!"DELETE".equalsIgnoreCase(item.method)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private void completeIndividualFallback(PendingBulkOperation item) {
@@ -1007,8 +1122,10 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
         for (JsonElement element : body.getAsJsonArray("Operations")) {
             if (!element.isJsonObject() || !element.getAsJsonObject().has("op")) return false;
             String op = element.getAsJsonObject().get("op").getAsString();
-            if (!"replace".equalsIgnoreCase(op) && !"remove".equalsIgnoreCase(op)
-                    && !"add".equalsIgnoreCase(op)) return false;
+            // Only replace is replay-safe for the connector's current SCIM PATCH
+            // contract. "add" may duplicate multi-valued data and "remove" can
+            // fail when the target value is already absent.
+            if (!"replace".equalsIgnoreCase(op)) return false;
         }
         return !body.getAsJsonArray("Operations").isEmpty();
     }
@@ -1113,7 +1230,22 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
         return ProvisioningUtil.getClaimValues(attrs, uri, getUserStoreDomainName());
     }
 
+    private boolean hasClaim(Map<ClaimMapping, List<String>> attrs, String claimUri) {
+        if (attrs == null || StringUtils.isBlank(claimUri)) return false;
+        for (ClaimMapping mapping : attrs.keySet()) {
+            if (mapping != null && mapping.getLocalClaim() != null
+                    && claimUri.equals(mapping.getLocalClaim().getClaimUri())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private List<String> groupNames(Map<ClaimMapping, List<String>> attrs) {
+        // ProvisioningUtil returns an empty list for both "claim absent" and
+        // "claim present with no groups". Preserve the distinction: absent is
+        // unknown, while a present empty list is an authoritative no-membership snapshot.
+        if (!hasClaim(attrs, IdentityProvisioningConstants.GROUP_CLAIM_URI)) return null;
         return distinctGroupNames(claimValues(attrs, IdentityProvisioningConstants.GROUP_CLAIM_URI));
     }
 
@@ -1184,7 +1316,9 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
                 case StalwartSCIMProvisioningConnectorConstants.BULK_FALLBACK_TO_INDIVIDUAL -> bulkFallbackToIndividual = parseTomlBoolean(entry);
                 case StalwartSCIMProvisioningConnectorConstants.BULK_REQUEST_TIMEOUT_MS -> bulkRequestTimeoutMs = parseTomlInteger(entry);
                 case StalwartSCIMProvisioningConnectorConstants.BULK_MAX_PAYLOAD_BYTES -> bulkMaxPayloadBytes = parseTomlInteger(entry);
-                default -> log.debug("Ignoring unknown key in [stalwart-scim] TOML section: " + entry.getKey());
+                default -> throw new IdentityProvisioningException(
+                        "Unknown key in [stalwart-scim] TOML section: " + entry.getKey()
+                                + ". Check the key name; refusing to silently ignore a configuration typo.");
             }
         }
     }
