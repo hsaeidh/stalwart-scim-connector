@@ -786,6 +786,11 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
     /** Short in-memory micro-batching. Every caller waits for its own Stalwart operation result. */
     private JsonObject requestBulkAt(String endpointBaseUrl, String method, String path, JsonObject body)
             throws IdentityProvisioningException {
+        // Never share an in-memory batch across requests whose WSO2 tenant context
+        // cannot be identified. In that rare case, retain correctness via Individual mode.
+        if (currentTenantId() < 0) {
+            return requestAtIndividual(endpointBaseUrl, method, path, body);
+        }
         if (bulkUnsupported) {
             if (bulkFallbackToIndividual) return requestAtIndividual(endpointBaseUrl, method, path, body);
             throw new IdentityProvisioningException("Stalwart SCIM Bulk endpoint is unavailable.");
