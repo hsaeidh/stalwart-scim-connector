@@ -43,6 +43,10 @@ jobs:
           print("Verified connector bundle version, embedded Gson, and absence of Outbox classes.")
           PY
           test -f config/stalwart-scim-connector.toml.example
+          if grep -R -nE 'System\.err|printStackTrace|IRISA' components/org.stalwart.identity.provisioning.connector.scim/src/main README.md config; then
+            echo "Debug stderr output or organization-specific attribution remains."
+            exit 1
+          fi
           if grep -R -nE 'HybridProfileOutbox|ScimOperationOutbox|hybrid-outbox|hybrid-scope-id|jdbc/WSO2CarbonDB|HYBRID' components/org.stalwart.identity.provisioning.connector.scim/src/main; then
             echo "Legacy durable Outbox/HYBRID references remain."
             exit 1
