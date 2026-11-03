@@ -820,7 +820,7 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
                 }
                 if (batch.operations.size() >= BULK_BATCH_MAX_OPERATIONS) {
                     batch.scheduled.cancel(false);
-                    batch.scheduled = BULK_DISPATCHER.schedule(() -> flushBulkBatch(key, batch), 0, TimeUnit.MILLISECONDS);
+                    batch.scheduled = bulkDispatcher().schedule(() -> flushBulkBatch(key, batch), 0, TimeUnit.MILLISECONDS);
                 }
             } catch (RuntimeException e) {
                 batch.operations.remove(pending);
@@ -870,7 +870,7 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
         if (!chunk.isEmpty()) owner.sendBulkChunk(chunk);
         synchronized (batch) {
             if (!batch.operations.isEmpty() && batch.scheduled == null) {
-                batch.scheduled = BULK_DISPATCHER.schedule(() -> flushBulkBatch(key, batch),
+                batch.scheduled = bulkDispatcher().schedule(() -> flushBulkBatch(key, batch),
                         BULK_BATCH_WINDOW_MS, TimeUnit.MILLISECONDS);
             } else if (batch.operations.isEmpty()) {
                 BULK_BATCHES.remove(key, batch);
