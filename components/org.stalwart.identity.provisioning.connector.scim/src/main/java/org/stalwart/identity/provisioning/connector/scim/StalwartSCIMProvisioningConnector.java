@@ -754,11 +754,22 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
         ScheduledFuture<?> scheduled;
     }
     private static final ConcurrentMap<String, BulkBatch> BULK_BATCHES = new ConcurrentHashMap<>();
-    private static final ScheduledExecutorService BULK_DISPATCHER = Executors.newScheduledThreadPool(2, task -> {
-        Thread thread = new Thread(task, "stalwart-scim-bulk-dispatcher");
-        thread.setDaemon(true);
-        return thread;
-    });
+    private static volatile ScheduledExecutorService BULK_DISPATCHER = createBulkDispatcher();
+
+    private static ScheduledExecutorService createBulkDispatcher() {
+        return Executors.newScheduledThreadPool(2, task -> {
+            Thread thread = new Thread(task, "stalwart-scim-bulk-dispatcher");
+            thread.setDaemon(true);
+            return thread;
+        });
+    }
+
+    private static synchronized ScheduledExecutorService bulkDispatcher() {
+        if (BULK_DISPATCHER.isShutdown() || BULK_DISPATCHER.isTerminated()) {
+            BULK_DISPATCHER = createBulkDispatcher();
+        }
+        return BULK_DISPATCHER;
+    }
     private static final int BULK_BATCH_MAX_OPERATIONS = 100;
     private static final int BULK_PENDING_LIMIT = 5000;
     private static final Semaphore BULK_PENDING_PERMITS = new Semaphore(BULK_PENDING_LIMIT, true);
@@ -804,7 +815,7 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
             try {
                 batch.operations.add(pending);
                 if (batch.scheduled == null) {
-                    batch.scheduled = BULK_DISPATCHER.schedule(() -> flushBulkBatch(key, batch),
+                    batch.scheduled = bulkDispatcher().schedule(() -> flushBulkBatch(key, batch),
                             BULK_BATCH_WINDOW_MS, TimeUnit.MILLISECONDS);
                 }
                 if (batch.operations.size() >= BULK_BATCH_MAX_OPERATIONS) {
