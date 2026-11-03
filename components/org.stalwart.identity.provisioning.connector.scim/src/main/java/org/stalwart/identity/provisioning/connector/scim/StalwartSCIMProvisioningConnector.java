@@ -31,6 +31,8 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
@@ -139,6 +141,7 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
                 }
             }
         }
+        applyTomlOverrides();
         if (!"INDIVIDUAL".equals(provisioningMode) && !"BULK".equals(provisioningMode)) {
             throw new IdentityProvisioningException("provisioning-mode must be INDIVIDUAL or BULK.");
         }
@@ -1129,6 +1132,112 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
             }
         }
         return new ArrayList<>(unique);
+    }
+
+    /** Read optional local TOML configuration using WSO2's standard carbon.home property. */
+    private void applyTomlOverrides() throws IdentityProvisioningException {
+        String carbonHome = System.getProperty("carbon.home");
+        if (StringUtils.isBlank(carbonHome)) return;
+        Path file = Path.of(carbonHome, "repository", "conf", "stalwart-scim-connector.toml");
+        if (!Files.isRegularFile(file)) return;
+        Map<String, String> values = new java.util.LinkedHashMap<>();
+        boolean inSection = false;
+        try {
+            for (String raw : Files.readAllLines(file, StandardCharsets.UTF_8)) {
+                String line = stripTomlComment(raw).trim();
+                if (line.isEmpty()) continue;
+                if (line.startsWith("[") && line.endsWith("]")) {
+                    inSection = "[stalwart-scim]".equals(line);
+                    continue;
+                }
+                if (!inSection) continue;
+                int equals = line.indexOf('=');
+                if (equals <= 0) throw new IdentityProvisioningException("Invalid key/value in connector TOML file: " + file);
+                String key = line.substring(0, equals).trim();
+                String value = parseTomlScalar(line.substring(equals + 1).trim(), file);
+                if (values.putIfAbsent(key, value) != null) {
+                    throw new IdentityProvisioningException("Duplicate TOML key in [stalwart-scim]: " + key);
+                }
+            }
+        } catch (IOException e) {
+            throw new IdentityProvisioningException("Unable to read connector TOML file: " + file, e);
+        }
+        for (Map.Entry<String, String> entry : values.entrySet()) {
+            String value = entry.getValue();
+            switch (entry.getKey()) {
+                case StalwartSCIMProvisioningConnectorConstants.BASE_URL -> baseUrl = trimTrailingSlash(value);
+                case StalwartSCIMProvisioningConnectorConstants.BEARER_TOKEN -> bearerToken = value;
+                case StalwartSCIMProvisioningConnectorConstants.USERSTORE_DOMAIN -> userStoreDomainName = value;
+                case StalwartSCIMProvisioningConnectorConstants.ENABLE_CLAIM_MAPPING -> claimMappingEnabled = parseTomlBoolean(entry);
+                case StalwartSCIMProvisioningConnectorConstants.USERNAME_CLAIM_URI -> userNameClaimUri = value;
+                case StalwartSCIMProvisioningConnectorConstants.EXTERNAL_ID_CLAIM_URI -> externalIdClaimUri = value;
+                case StalwartSCIMProvisioningConnectorConstants.GIVEN_NAME_CLAIM_URI -> givenNameClaimUri = value;
+                case StalwartSCIMProvisioningConnectorConstants.FAMILY_NAME_CLAIM_URI -> familyNameClaimUri = value;
+                case StalwartSCIMProvisioningConnectorConstants.DISPLAY_NAME_CLAIM_URI -> displayNameClaimUri = value;
+                case StalwartSCIMProvisioningConnectorConstants.ENABLE_PROFILE_UPDATES -> enableProfileUpdates = parseTomlBoolean(entry);
+                case StalwartSCIMProvisioningConnectorConstants.PROFILE_UPDATE_SCIM_URL -> profileUpdateScimUrl = trimTrailingSlash(value);
+                case StalwartSCIMProvisioningConnectorConstants.MAX_CONCURRENT_REQUESTS -> maxConcurrentRequests = parseTomlInteger(entry);
+                case StalwartSCIMProvisioningConnectorConstants.ACTIVE_CLAIM_URI -> activeClaimUri = value;
+                case StalwartSCIMProvisioningConnectorConstants.INVERT_ACTIVE_CLAIM -> invertActiveClaim = parseTomlBoolean(entry);
+                case StalwartSCIMProvisioningConnectorConstants.EMAIL_MEMBERSHIP_GROUP -> emailMembershipGroup = value;
+                case StalwartSCIMProvisioningConnectorConstants.PROVISIONING_MODE -> provisioningMode = value.toUpperCase(java.util.Locale.ROOT);
+                case StalwartSCIMProvisioningConnectorConstants.BULK_FALLBACK_TO_INDIVIDUAL -> bulkFallbackToIndividual = parseTomlBoolean(entry);
+                case StalwartSCIMProvisioningConnectorConstants.BULK_REQUEST_TIMEOUT_MS -> bulkRequestTimeoutMs = parseTomlInteger(entry);
+                case StalwartSCIMProvisioningConnectorConstants.BULK_MAX_PAYLOAD_BYTES -> bulkMaxPayloadBytes = parseTomlInteger(entry);
+                default -> log.debug("Ignoring unknown key in [stalwart-scim] TOML section: " + entry.getKey());
+            }
+        }
+    }
+
+    private String stripTomlComment(String line) {
+        boolean quoted = false;
+        boolean escaped = false;
+        for (int i = 0; i < line.length(); i++) {
+            char ch = line.charAt(i);
+            if (escaped) { escaped = false; continue; }
+            if (quoted && ch == '\\\\') { escaped = true; continue; }
+            if (ch == '"') quoted = !quoted;
+            if (ch == '#' && !quoted) return line.substring(0, i);
+        }
+        return line;
+    }
+
+    private String parseTomlScalar(String raw, Path file) throws IdentityProvisioningException {
+        if (raw.isEmpty()) return "";
+        if (raw.startsWith("\"") && raw.endsWith("\"") && raw.length() >= 2) {
+            String value = raw.substring(1, raw.length() - 1);
+            StringBuilder decoded = new StringBuilder();
+            boolean escaped = false;
+            for (int i = 0; i < value.length(); i++) {
+                char ch = value.charAt(i);
+                if (escaped) {
+                    if (ch == 'n') decoded.append('\n');
+                    else if (ch == 'r') decoded.append('\r');
+                    else if (ch == 't') decoded.append('\t');
+                    else if (ch == '"' || ch == '\\\\') decoded.append(ch);
+                    else throw new IdentityProvisioningException("Unsupported TOML escape in " + file);
+                    escaped = false;
+                } else if (ch == '\\\\') escaped = true;
+                else decoded.append(ch);
+            }
+            if (escaped) throw new IdentityProvisioningException("Incomplete TOML escape in " + file);
+            return decoded.toString();
+        }
+        if ("true".equals(raw) || "false".equals(raw) || raw.matches("-?[0-9]+")) return raw;
+        throw new IdentityProvisioningException("TOML scalar must be a quoted string, Boolean or integer in " + file);
+    }
+
+    private boolean parseTomlBoolean(Map.Entry<String, String> entry) throws IdentityProvisioningException {
+        if ("true".equals(entry.getValue())) return true;
+        if ("false".equals(entry.getValue())) return false;
+        throw new IdentityProvisioningException("TOML key " + entry.getKey() + " must be true or false.");
+    }
+
+    private int parseTomlInteger(Map.Entry<String, String> entry) throws IdentityProvisioningException {
+        try { return Integer.parseInt(entry.getValue()); }
+        catch (NumberFormatException e) {
+            throw new IdentityProvisioningException("TOML key " + entry.getKey() + " must be an integer.", e);
+        }
     }
 
     private String valueOf(Property property) {
