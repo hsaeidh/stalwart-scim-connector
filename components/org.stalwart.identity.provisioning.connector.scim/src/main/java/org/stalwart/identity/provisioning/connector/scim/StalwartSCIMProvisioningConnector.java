@@ -256,7 +256,7 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
         List<String> initialGroups = groupNames(attrs);
         boolean emailEntitled = initialGroups != null
                 && initialGroups.stream().anyMatch(this::isEmailMembershipGroup);
-        boolean activeClaimAllows = activeClaimAllows(attrs, entity.getEntityName());
+        boolean activeClaimAllows = !emailEntitled || activeClaimAllows(attrs, entity.getEntityName());
         // WSO2 can retry a failed provisioning event. Reuse an existing account so
         // a later group-membership failure does not cause a duplicate-user conflict.
         if (existingId == null) {
