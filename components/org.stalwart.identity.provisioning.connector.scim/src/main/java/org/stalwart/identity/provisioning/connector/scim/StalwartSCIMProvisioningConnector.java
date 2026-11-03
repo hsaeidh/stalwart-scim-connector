@@ -189,6 +189,8 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
         if (bearerToken.indexOf('\r') >= 0 || bearerToken.indexOf('\n') >= 0) {
             throw new IdentityProvisioningException("Stalwart SCIM bearer token contains an invalid line break.");
         }
+    }
+
     @Override
     public ProvisionedIdentifier provision(ProvisioningEntity entity) throws IdentityProvisioningException {
         if (entity == null) {
