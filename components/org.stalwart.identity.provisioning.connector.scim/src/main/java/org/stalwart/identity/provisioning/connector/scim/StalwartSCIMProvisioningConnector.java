@@ -1240,7 +1240,22 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
         return ProvisioningUtil.getClaimValues(attrs, uri, getUserStoreDomainName());
     }
 
+    private boolean hasClaim(Map<ClaimMapping, List<String>> attrs, String claimUri) {
+        if (attrs == null || StringUtils.isBlank(claimUri)) return false;
+        for (ClaimMapping mapping : attrs.keySet()) {
+            if (mapping != null && mapping.getLocalClaim() != null
+                    && claimUri.equals(mapping.getLocalClaim().getClaimUri())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private List<String> groupNames(Map<ClaimMapping, List<String>> attrs) {
+        // ProvisioningUtil returns an empty list for both "claim absent" and
+        // "claim present with no groups". Preserve the distinction: absent is
+        // unknown, while a present empty list is an authoritative no-membership snapshot.
+        if (!hasClaim(attrs, IdentityProvisioningConstants.GROUP_CLAIM_URI)) return null;
         return distinctGroupNames(claimValues(attrs, IdentityProvisioningConstants.GROUP_CLAIM_URI));
     }
 
