@@ -256,11 +256,13 @@ public final class StalwartSCIMFactorySmokeTest {
             StalwartSCIMProvisioningConnector connector = newConnector(base, "INDIVIDUAL");
             Map<ClaimMapping, List<String>> add = claims(
                     "http://wso2.org/claims/username", "stable-existing",
+                    IdentityProvisioningConstants.GROUP_CLAIM_URI, "Email",
                     IdentityProvisioningConstants.NEW_GROUP_CLAIM_URI, "Email");
             connector.provision(new ProvisioningEntity(ProvisioningEntityType.USER, "stable-existing",
                     ProvisioningOperation.PATCH, add));
             Map<ClaimMapping, List<String>> remove = claims(
                     "http://wso2.org/claims/username", "stable-existing",
+                    IdentityProvisioningConstants.GROUP_CLAIM_URI, "Other",
                     IdentityProvisioningConstants.DELETED_GROUP_CLAIM_URI, "Email");
             connector.provision(new ProvisioningEntity(ProvisioningEntityType.USER, "stable-existing",
                     ProvisioningOperation.PATCH, remove));
