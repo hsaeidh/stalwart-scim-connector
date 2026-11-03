@@ -10,6 +10,7 @@ import org.wso2.carbon.identity.provisioning.IdentityProvisioningConstants;
 import org.wso2.carbon.identity.provisioning.ProvisioningEntity;
 import org.wso2.carbon.identity.provisioning.ProvisioningEntityType;
 import org.wso2.carbon.identity.provisioning.ProvisioningOperation;
+import org.wso2.carbon.context.PrivilegedCarbonContext;
 import java.lang.reflect.Method;
 import java.lang.reflect.Field;
 import java.nio.file.Files;
@@ -273,8 +274,14 @@ public final class StalwartSCIMFactorySmokeTest {
             patch.addProperty("schemas", "urn:ietf:params:scim:api:messages:2.0:PatchOp");
             var pool = Executors.newFixedThreadPool(2);
             try {
-                Future<?> first = pool.submit(() -> invoke(request, connector, base, "POST", "/Users", user));
-                Future<?> second = pool.submit(() -> invoke(request, connector, base, "PATCH", "/Users/u-2", patch));
+                Future<?> first = pool.submit(() -> {
+                    PrivilegedCarbonContext.getThreadLocalCarbonContext().setTenantId(1);
+                    return invoke(request, connector, base, "POST", "/Users", user);
+                });
+                Future<?> second = pool.submit(() -> {
+                    PrivilegedCarbonContext.getThreadLocalCarbonContext().setTenantId(1);
+                    return invoke(request, connector, base, "PATCH", "/Users/u-2", patch);
+                });
                 first.get(); second.get();
             } finally { pool.shutdownNow(); }
             if (received.get() == null || received.get().getAsJsonArray("Operations").size() != 2) {
