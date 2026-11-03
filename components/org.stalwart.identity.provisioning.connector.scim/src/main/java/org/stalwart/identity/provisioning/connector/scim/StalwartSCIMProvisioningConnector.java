@@ -676,12 +676,14 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
         ScheduledFuture<?> scheduled;
     }
     private static final ConcurrentMap<String, BulkBatch> BULK_BATCHES = new ConcurrentHashMap<>();
-    private static final ScheduledExecutorService BULK_DISPATCHER = Executors.newSingleThreadScheduledExecutor(task -> {
+    private static final ScheduledExecutorService BULK_DISPATCHER = Executors.newScheduledThreadPool(2, task -> {
         Thread thread = new Thread(task, "stalwart-scim-bulk-dispatcher");
         thread.setDaemon(true);
         return thread;
     });
     private static final int BULK_BATCH_MAX_OPERATIONS = 100;
+    private static final int BULK_PENDING_LIMIT = 5000;
+    private static final Semaphore BULK_PENDING_PERMITS = new Semaphore(BULK_PENDING_LIMIT, true);
     private static final long BULK_BATCH_WINDOW_MS = 150;
 
     /** Completes pending in-memory requests before the OSGi bundle is stopped. */
@@ -707,7 +709,11 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
             throw new IdentityProvisioningException("Stalwart SCIM Bulk endpoint is unavailable.");
         }
         String key = endpointBaseUrl + "|" + tokenFingerprint(bearerToken);
+        if (!BULK_PENDING_PERMITS.tryAcquire()) {
+            throw new IdentityProvisioningException("The in-memory SCIM Bulk pending-operation limit has been reached; retry after current requests complete.");
+        }
         PendingBulkOperation pending = new PendingBulkOperation(this, endpointBaseUrl, method, path, body);
+        pending.result.whenComplete((result, error) -> BULK_PENDING_PERMITS.release());
         BulkBatch batch = BULK_BATCHES.computeIfAbsent(key, ignored -> new BulkBatch());
         synchronized (batch) {
             batch.operations.add(pending);

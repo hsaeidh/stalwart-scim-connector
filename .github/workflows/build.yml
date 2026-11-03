@@ -19,6 +19,8 @@ jobs:
           distribution: temurin
           java-version: "21"
           cache: maven
+      - name: Validate installer scripts
+        run: bash -n install.sh uninstall.sh
       - name: Build and run connector smoke tests
         run: mvn -B -ntp clean verify
       - name: Verify deployable OSGi bundle and no durable outbox dependency
@@ -40,6 +42,7 @@ jobs:
           assert not any(n.startswith("org/wso2/") for n in names), "WSO2 API classes must not be embedded"
           print("Verified connector bundle version, embedded Gson, and absence of Outbox classes.")
           PY
+          test -f config/stalwart-scim-connector.toml.example
           if grep -R -nE 'HybridProfileOutbox|ScimOperationOutbox|hybrid-outbox|hybrid-scope-id|jdbc/WSO2CarbonDB|HYBRID' components/org.stalwart.identity.provisioning.connector.scim/src/main; then
             echo "Legacy durable Outbox/HYBRID references remain."
             exit 1

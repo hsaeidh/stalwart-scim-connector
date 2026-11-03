@@ -9,6 +9,9 @@ import org.wso2.carbon.identity.provisioning.ProvisioningEntity;
 import org.wso2.carbon.identity.provisioning.ProvisioningEntityType;
 import org.wso2.carbon.identity.provisioning.ProvisioningOperation;
 import java.lang.reflect.Method;
+import java.lang.reflect.Field;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
@@ -27,9 +30,45 @@ public final class StalwartSCIMFactorySmokeTest {
         if (!"stalwart-scim".equals(factory.getConnectorType()) || properties.size() != 19) {
             throw new IllegalStateException("Unexpected connector factory metadata.");
         }
+        assertTomlConfiguration();
         assertBulkMicroBatch();
         assertDeleteDisablesAccount();
         System.out.println("SMOKE TEST PASSED v2.0.6");
+    }
+
+    private static void assertTomlConfiguration() throws Exception {
+        Path home = Files.createTempDirectory("stalwart-scim-config-test");
+        Path conf = home.resolve("repository/conf");
+        Files.createDirectories(conf);
+        Files.writeString(conf.resolve("stalwart-scim-connector.toml"),
+                "[stalwart-scim]\\n" +
+                "scim-base-url = \"https://mail.example.test/scim/v2\"\\n" +
+                "scim-bearer-token = \"toml-token\"\\n" +
+                "provisioning-mode = \"BULK\"\\n" +
+                "bulk-request-timeout-ms = 45000\\n");
+        String previous = System.getProperty("carbon.home");
+        System.setProperty("carbon.home", home.toString());
+        try {
+            Property url = new Property(); url.setName(StalwartSCIMProvisioningConnectorConstants.BASE_URL); url.setValue("");
+            Property token = new Property(); token.setName(StalwartSCIMProvisioningConnectorConstants.BEARER_TOKEN); token.setValue("");
+            StalwartSCIMProvisioningConnector connector = new StalwartSCIMProvisioningConnector();
+            connector.init(new Property[]{url, token});
+            if (!"https://mail.example.test/scim/v2".equals(field(connector, "baseUrl"))
+                    || !"toml-token".equals(field(connector, "bearerToken"))
+                    || !"BULK".equals(field(connector, "provisioningMode"))
+                    || !Integer.valueOf(45000).equals(field(connector, "bulkRequestTimeoutMs"))) {
+                throw new IllegalStateException("TOML values were not loaded and applied.");
+            }
+        } finally {
+            if (previous == null) System.clearProperty("carbon.home");
+            else System.setProperty("carbon.home", previous);
+        }
+    }
+
+    private static Object field(Object target, String name) throws Exception {
+        Field field = target.getClass().getDeclaredField(name);
+        field.setAccessible(true);
+        return field.get(target);
     }
 
     private static void assertBulkMicroBatch() throws Exception {

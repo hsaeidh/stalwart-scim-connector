@@ -33,9 +33,9 @@ public class StalwartSCIMProvisioningConnectorFactory extends AbstractProvisioni
         try {
             List<Property> properties = new ArrayList<>();
             properties.add(property(StalwartSCIMProvisioningConnectorConstants.BASE_URL,
-                    "Stalwart SCIM Base URL", "https://mail.example.com/scim/v2", true, false, 1));
+                    "Stalwart SCIM Base URL (or set scim-base-url in connector TOML)", "", false, false, 1));
             properties.add(property(StalwartSCIMProvisioningConnectorConstants.BEARER_TOKEN,
-                    "Stalwart SCIM Bearer Token", null, true, true, 2));
+                    "Stalwart SCIM Bearer Token (or set scim-bearer-token in connector TOML)", null, false, true, 2));
             properties.add(property(StalwartSCIMProvisioningConnectorConstants.USERSTORE_DOMAIN,
                     "User Store Domain", null, false, false, 3));
 

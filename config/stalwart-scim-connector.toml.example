@@ -1,0 +1,30 @@
+# Copy this file to <WSO2_HOME>/repository/conf/stalwart-scim-connector.toml
+# Restrict permissions to the WSO2 service account (for example chmod 0600).
+[stalwart-scim]
+scim-base-url = "https://mail.example.com/scim/v2"
+scim-bearer-token = "REPLACE_WITH_STALWART_API_KEY"
+scim-user-store-domain = "PRIMARY"
+
+enable-claim-mapping = true
+username-claim-uri = "http://wso2.org/claims/emailaddress"
+external-id-claim-uri = "http://wso2.org/claims/username"
+given-name-claim-uri = "http://wso2.org/claims/givenname"
+family-name-claim-uri = "http://wso2.org/claims/lastname"
+display-name-claim-uri = "http://wso2.org/claims/displayname"
+
+enable-profile-updates = true
+profile-update-scim-url = ""
+max-concurrent-requests = 8
+
+# Optional WSO2 Boolean claim for account state.
+active-claim-uri = ""
+invert-active-claim = false
+
+# This WSO2 group grants email access; Stalwart Groups are not provisioned.
+email-membership-group = "Email"
+
+# INDIVIDUAL or BULK. BULK combines concurrent operations in a short in-memory window.
+provisioning-mode = "BULK"
+bulk-fallback-to-individual = true
+bulk-request-timeout-ms = 30000
+bulk-max-payload-bytes = 900000

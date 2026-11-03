@@ -87,6 +87,17 @@ components/org.stalwart.identity.provisioning.connector.scim/target/org.stalwart
 
 فقط JAR کانکتور باید در WSO2 نصب شود؛ APIهای WSO2 داخل JAR بسته‌بندی نمی‌شوند. Gson به‌صورت dependency داخلی Bundle قرار می‌گیرد.
 
+## نصب خودکار
+
+در ریشه مخزن:
+
+```bash
+chmod +x install.sh uninstall.sh
+./install.sh /path/to/org.stalwart.identity.provisioning.connector.scim-2.0.6-SNAPSHOT.jar
+```
+
+نصب‌کننده ابتدا VM یا Docker را می‌پرسد؛ در حالت Docker نام Container را می‌گیرد. مسیر dropins و مسیر TOML را تشخیص داده و پیش از هر تغییری تأیید می‌خواهد. JAR قبلی همین Bundle با پسوند backup نگهداری می‌شود. فایل‌های دیگر حذف یا جایگزین نمی‌شوند. برای حذف، `./uninstall.sh` را اجرا کنید؛ اسکریپت JAR را به فایل disabled منتقل می‌کند و TOML را نگه می‌دارد.
+
 ## نصب دستی
 
 1. WSO2 را متوقف کنید.
@@ -99,7 +110,28 @@ components/org.stalwart.identity.provisioning.connector.scim/target/org.stalwart
 5. لاگ را برای فعال‌شدن OSGi Component و ثبت Factory بررسی کنید.
 6. در پنل WSO2 یک Outbound Provisioning Connector از نوع `stalwart-scim` بسازید و فیلدهای اتصال و Claim را تنظیم کنید.
 
-تنظیمات اتصال Outbound Provisioning در WSO2 از طریق UI همان اتصال مدیریت می‌شود؛ این نسخه فایل TOML سفارشی را به‌عنوان منبع پیکربندی نمی‌خواند. برای جلوگیری از ایجاد یک فایل ظاهراً مؤثر ولی بدون مصرف، نصب‌کننده‌ای که TOML را تغییر دهد تا زمان اضافه‌شدن پشتیبانی واقعی از TOML ارائه نمی‌شود.
+تنظیمات اتصال را می‌توان از فایل زیر نیز خواند:
+
+`<WSO2_HOME>/repository/conf/stalwart-scim-connector.toml`
+
+این فایل در بخش `[stalwart-scim]` قرار می‌گیرد و کلیدهای آن همان نام Propertyهای کانکتور هستند؛ برای نمونه `scim-base-url` و `scim-bearer-token`. مقادیر TOML پس از Propertyهای UI اعمال می‌شوند و بنابراین بر آن‌ها اولویت دارند. در صورت نبود فایل، تنظیمات UI بدون تغییر استفاده می‌شوند. مسیر از Property استاندارد `carbon.home` در WSO2 به دست می‌آید و JVM Property یا Environment Variable اختصاصی لازم نیست.
+
+قالب نمونه در `config/stalwart-scim-connector.toml.example` قرار دارد. نصب‌کننده فایل را در صورت نبودن ایجاد می‌کند؛ اگر فایل یا بخش آن از قبل وجود داشته باشد، محتوای قبلی را بازنویسی نمی‌کند. برای نگهداری Token، مجوز فایل را فقط به کاربر WSO2 محدود کنید.
+
+## نمونه فایل TOML
+
+```toml
+[stalwart-scim]
+scim-base-url = "https://mail.example.com/scim/v2"
+scim-bearer-token = "REPLACE_WITH_API_KEY"
+provisioning-mode = "BULK"
+bulk-request-timeout-ms = 30000
+bulk-max-payload-bytes = 900000
+max-concurrent-requests = 8
+email-membership-group = "Email"
+```
+
+سایر کلیدهای اختیاری در فایل نمونه موجودند. رشته‌ها باید داخل کوتیشن دوتایی باشند؛ Booleanها به‌صورت `true` یا `false` و اعداد به‌صورت عدد صحیح نوشته شوند. Parser عمداً فقط این scalarها را می‌پذیرد و آرایه، inline table یا multiline string را پشتیبانی نمی‌کند.
 
 ## نکات امنیتی و عملیاتی
 
