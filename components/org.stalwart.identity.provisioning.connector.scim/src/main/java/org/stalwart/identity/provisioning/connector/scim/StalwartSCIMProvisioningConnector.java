@@ -708,7 +708,7 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
             if (bulkFallbackToIndividual) return requestAtIndividual(endpointBaseUrl, method, path, body);
             throw new IdentityProvisioningException("Stalwart SCIM Bulk endpoint is unavailable.");
         }
-        String key = endpointBaseUrl + "|" + tokenFingerprint(bearerToken);
+        String key = endpointBaseUrl + "|" + tokenFingerprint(bearerToken) + "|" + bulkMaxPayloadBytes + "|" + bulkRequestTimeoutMs + "|" + bulkFallbackToIndividual;
         if (!BULK_PENDING_PERMITS.tryAcquire()) {
             throw new IdentityProvisioningException("The in-memory SCIM Bulk pending-operation limit has been reached; retry after current requests complete.");
         }
@@ -949,8 +949,7 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
                     continue;
                 }
             }            if (status < 200 || status >= 300) {
-                throw new IdentityProvisioningException("Stalwart SCIM " + method + " request failed with HTTP "
-                        + status + ": " + abbreviate(response.body()));
+                throw new IdentityProvisioningException("Stalwart SCIM " + method + " request failed with HTTP " + status + ".");
             }
             JsonObject parsed = StringUtils.isBlank(response.body())
                     ? new JsonObject() : JsonParser.parseString(response.body()).getAsJsonObject();
@@ -1150,11 +1149,6 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
 
     private static String escapeFilter(String value) {
         return value.replace("\\", "\\\\").replace("\"", "\\\"");
-    }
-
-    private static String abbreviate(String value) {
-        if (value == null) return "";
-        return value.length() > 1200 ? value.substring(0, 1200) + "..." : value;
     }
 
     @Override
