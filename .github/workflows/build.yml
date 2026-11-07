@@ -36,6 +36,9 @@ jobs:
               names=z.namelist()
               manifest=z.read("META-INF/MANIFEST.MF").decode()
           assert "Bundle-Version: 2.0.9.SNAPSHOT" in manifest, manifest
+          assert "Bundle-Vendor: Stalwart SCIM Connector contributors" in manifest, manifest
+          assert "github.com/hsaeidh/stalwart-scim-connector" in manifest, manifest
+          assert "github.com/wso2/carbon-parent" not in manifest, "Inherited WSO2 parent SCM metadata must not leak into this bundle"
           assert "org/stalwart/identity/provisioning/connector/scim/StalwartSCIMProvisioningConnector.class" in names
           assert not any("Outbox" in n for n in names), "Legacy Outbox classes must not be packaged"
           assert "lib/gson-2.11.0.jar" in names, "Embedded Gson is missing"
