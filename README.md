@@ -2,7 +2,7 @@
 
 ## ۱. وضعیت نسخه و دامنهٔ پشتیبانی
 
-- نسخهٔ توسعه: **2.0.8-SNAPSHOT**
+- نسخهٔ توسعه: **2.0.9-SNAPSHOT**
 - پلتفرم هدف: **WSO2 Identity Server 7.3.0**
 - نسخهٔ Java موردنیاز: **Java 21**
 - مقصد Provisioning: **Stalwart Enterprise 1.0.2** با SCIM 2.0 فعال
@@ -93,7 +93,7 @@ https://mail.example.net/scim/v2
 
 هر کدام به‌تنهایی برای ایجاد درخواست Update کافی است.
 
-اگر فقط FIRSTNAME یا LASTNAME در رویداد آمده باشد، کانکتور مقادیر کامل و جاری FIRSTNAME و LASTNAME را از UserStore مربوط به Tenant جاری WSO2 می‌خواند و سپس `displayName` کامل را می‌سازد. بنابراین مقدار ناقص یا قدیمی Claim رویداد به‌عنوان نام کامل ارسال نمی‌شود. خالی‌شدن مقدار نهایی می‌تواند باعث پاک‌شدن `displayName` در Stalwart شود.
+مقدار Claimهایی که در خود رویداد WSO2 وجود دارند مرجع اصلی هستند؛ کانکتور فقط Claim نامِ غایب را از UserStore مربوط به Tenant جاری می‌خواند. بنابراین مقدار FIRSTNAME یا LASTNAME موجود در رویداد، حتی اگر Snapshot قدیمی باشد، حفظ می‌شود. اگر هر دو Claim در رویداد باشند، خواندن UserStore لازم نیست. Claim حاضر با مقدار خالی نیز پاک‌سازی صریح محسوب می‌شود. مقدار نهایی خالی می‌تواند `displayName` را در Stalwart پاک کند.
 
 تغییر ایمیل اصلی، Alias، username داخلی WSO2 و Claimهای نامرتبط، به‌تنهایی Update در Stalwart ایجاد نمی‌کند.
 
@@ -225,7 +225,7 @@ Active Claim صرفاً یک قید تکمیلی است؛ مقدار true آن �
 ### سناریو G — تغییر FIRSTNAME یا LASTNAME یا DISPLAYNAME
 
 - هر یک از سه Claim به‌تنهایی محرک Update است (OR، نه AND).
-- برای تغییر FIRSTNAME یا LASTNAME، مقادیر کامل جاری از UserStore خوانده و یک `displayName` کامل ساخته می‌شود.
+- مقدار FIRSTNAME یا LASTNAME موجود در رویداد اولویت دارد؛ فقط بخش غایب از UserStore خوانده می‌شود و سپس یک `displayName` کامل ساخته می‌شود.
 - برای تغییر DISPLAYNAME، مقدار آن مستقیماً اعمال می‌شود؛ مقدار خالی می‌تواند فیلد را پاک کند.
 - PATCH فقط شامل `displayName` است.
 - `userName` و `externalId` در این درخواست حضور ندارند و تغییر نمی‌کنند.
@@ -391,7 +391,7 @@ mvn -B -ntp clean verify
 مسیر JAR:
 
 ```text
-components/org.stalwart.identity.provisioning.connector.scim/target/org.stalwart.identity.provisioning.connector.scim-2.0.8-SNAPSHOT.jar
+components/org.stalwart.identity.provisioning.connector.scim/target/org.stalwart.identity.provisioning.connector.scim-2.0.9-SNAPSHOT.jar
 ```
 
 ### ۱۰.۳. نصب خودکار روی VM یا Docker
@@ -406,7 +406,7 @@ chmod +x install.sh uninstall.sh
 یا مسیر JAR را صریح بدهید:
 
 ```bash
-./install.sh components/org.stalwart.identity.provisioning.connector.scim/target/org.stalwart.identity.provisioning.connector.scim-2.0.8-SNAPSHOT.jar
+./install.sh components/org.stalwart.identity.provisioning.connector.scim/target/org.stalwart.identity.provisioning.connector.scim-2.0.9-SNAPSHOT.jar
 ```
 
 نصب‌کننده:
@@ -427,7 +427,7 @@ chmod +x install.sh uninstall.sh
 ### ۱۰.۴. نصب دستی
 
 1. WSO2 را متوقف کنید.
-2. JAR نسخهٔ 2.0.8 را در مسیر زیر قرار دهید:
+2. JAR نسخهٔ 2.0.9 را در مسیر زیر قرار دهید:
 
    `<WSO2_HOME>/repository/components/dropins/`
 
@@ -499,7 +499,8 @@ chmod +x install.sh uninstall.sh
 | 9 | افزودن مجدد به Email | PATCH active=true در صورت اجازهٔ Active Claim |
 | 10 | Delete کاربر در WSO2 | PATCH active=false؛ بدون SCIM DELETE |
 | 11 | تغییر FIRSTNAME به‌تنهایی | PATCH displayName کامل |
-| 12 | تغییر LASTNAME به‌تنهایی | PATCH displayName کامل |
+| 12 | تغییر LASTNAME به‌تنهایی | PATCH displayName کامل با حفظ FIRSTNAME فعلی |
+| 12a | تغییر متوالی FIRSTNAME سپس LASTNAME | مقدار هر رویداد حفظ و displayName نهایی کامل باشد |
 | 13 | تغییر DISPLAYNAME به‌تنهایی | PATCH displayName |
 | 14 | خالی‌شدن DISPLAYNAME | پاک‌شدن مقدار displayName در مقصد |
 | 15 | تغییر ایمیل یا Alias | بدون Update در Stalwart |
@@ -525,7 +526,9 @@ Workflow مخزن موارد زیر را اجرا می‌کند:
 - بازیابی ایمیل و پروفایل مفقود در رویداد Group Add از UserStore؛
 - تقدم Snapshot کامل گروه بر Delta متناقض؛
 - تطبیق Create با پاسخ 409 و جلوگیری از ساخت تکراری؛
-- تغییر مستقل FIRSTNAME، LASTNAME و DISPLAYNAME و خواندن Snapshot کامل نام؛
+- تغییر متوالی FIRSTNAME/LASTNAME با تقدم مقدار رویداد بر Snapshot قدیمی؛
+- عدم خواندن UserStore وقتی هر دو بخش نام در رویداد هستند؛
+- حفظ معنای Claim حاضر با مقدار خالی برای پاک‌سازی نام؛
 - رد Active Claim نامعتبر یا مفقود؛
 - جداسازی Cache شناسه‌ها بین Tenantها؛
 - تبدیل Delete به PATCH `active=false`؛
@@ -554,7 +557,7 @@ Workflow مخزن موارد زیر را اجرا می‌کند:
 
 ## ۱۴. محدودیت‌ها و ملاحظات شناخته‌شده
 
-- نسخهٔ 2.0.8 در این شاخه با پسوند SNAPSHOT ساخته می‌شود و هنوز Release نهایی نیست.
+- نسخهٔ 2.0.9 در این شاخه با پسوند SNAPSHOT ساخته می‌شود و هنوز Release نهایی نیست.
 - اجرای CI اثبات نمی‌کند که Bundle در OSGi واقعی WSO2 فعال می‌شود یا همهٔ رفتارهای UserStore و Claim Mapping در تنظیمات محیط مقصد درست هستند.
 - Bulk دارای صف پایدار نیست؛ Crash ممکن است عملیات در صف را از بین ببرد.
 - exactly-once تضمین نمی‌شود. برای عملیات با نتیجهٔ مبهم، تطبیق با externalId و بررسی وضعیت مقصد ضروری است.
