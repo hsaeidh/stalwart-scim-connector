@@ -419,9 +419,9 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
 
     private boolean hasSupportedUpdate(Map<ClaimMapping, List<String>> attrs) {
         if (attrs == null || attrs.isEmpty()) return false;
-        return mappedValue(attrs, givenNameClaimUri) != null
-                || mappedValue(attrs, familyNameClaimUri) != null
-                || mappedValue(attrs, displayNameClaimUri) != null
+        return hasClaim(attrs, givenNameClaimUri)
+                || hasClaim(attrs, familyNameClaimUri)
+                || hasClaim(attrs, displayNameClaimUri)
                 || StringUtils.isNotBlank(mappedValue(attrs, activeClaimUri))
                 || CollectionUtils.isNotEmpty(claimValues(attrs, IdentityProvisioningConstants.NEW_GROUP_CLAIM_URI))
                 || CollectionUtils.isNotEmpty(claimValues(attrs, IdentityProvisioningConstants.DELETED_GROUP_CLAIM_URI));
@@ -500,35 +500,41 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
         JsonArray operations = new JsonArray();
 
         // userName and externalId are immutable identity keys after creation.
-        // A name-part delta is resolved against the authoritative current WSO2
-        // UserStore snapshot; no Event Handler or JVM property is involved.
-        String given = mappedValue(attrs, givenNameClaimUri);
-        String family = mappedValue(attrs, familyNameClaimUri);
-        String display = mappedValue(attrs, displayNameClaimUri);
-        if (includeProfile && display != null) {
+        // Values explicitly carried by the WSO2 event are authoritative for the
+        // changed claim. Read only missing name parts from UserStore, avoiding a
+        // stale snapshot overwriting the value that triggered this provisioning event.
+        boolean givenPresent = hasClaim(attrs, givenNameClaimUri);
+        boolean familyPresent = hasClaim(attrs, familyNameClaimUri);
+        if (includeProfile && hasClaim(attrs, displayNameClaimUri)) {
             // An explicitly supplied blank displayName is a clear operation.
+            String display = mappedValueIfPresent(attrs, displayNameClaimUri);
             addReplace(operations, "displayName", StringUtils.defaultString(display).trim());
-        } else if (includeProfile && (given != null || family != null)) {
-            String lookupName = entityName;
-            if (StringUtils.isNotBlank(userStoreDomainName) && StringUtils.isNotBlank(lookupName)
-                    && lookupName.indexOf('/') < 0) {
-                lookupName = userStoreDomainName.trim() + "/" + lookupName.trim();
+        } else if (includeProfile && (givenPresent || familyPresent)) {
+            String given = givenPresent ? mappedValueIfPresent(attrs, givenNameClaimUri) : null;
+            String family = familyPresent ? mappedValueIfPresent(attrs, familyNameClaimUri) : null;
+            List<String> missingClaims = new ArrayList<>();
+            if (!givenPresent) missingClaims.add(givenNameClaimUri);
+            if (!familyPresent) missingClaims.add(familyNameClaimUri);
+            if (!missingClaims.isEmpty()) {
+                String lookupName = entityName;
+                if (StringUtils.isNotBlank(userStoreDomainName) && StringUtils.isNotBlank(lookupName)
+                        && lookupName.indexOf('/') < 0) {
+                    lookupName = userStoreDomainName.trim() + "/" + lookupName.trim();
+                }
+                try {
+                    Map<String, String> snapshot = Wso2UserClaimSnapshot.read(
+                            lookupName, missingClaims.toArray(new String[0]));
+                    // A missing UserStore claim is a legitimate empty value. A
+                    // claim explicitly present in the event (even if blank) wins.
+                    if (!givenPresent) given = snapshot.getOrDefault(givenNameClaimUri, "");
+                    if (!familyPresent) family = snapshot.getOrDefault(familyNameClaimUri, "");
+                } catch (Exception e) {
+                    throw new IdentityProvisioningException(
+                            "Unable to read missing FIRSTNAME/LASTNAME claims from WSO2 UserStore.", e);
+                }
             }
-            try {
-                Map<String, String> snapshot = Wso2UserClaimSnapshot.read(lookupName,
-                        new String[]{givenNameClaimUri, familyNameClaimUri});
-                // A missing UserStore claim is a legitimate empty value.
-                String currentGiven = snapshot.getOrDefault(givenNameClaimUri, "");
-                String currentFamily = snapshot.getOrDefault(familyNameClaimUri, "");
-                String composed = joinName(currentGiven, currentFamily);
-                // Empty composed values intentionally clear Stalwart displayName.
-                addReplace(operations, "displayName", composed);
-            } catch (IdentityProvisioningException e) {
-                throw e;
-            } catch (Exception e) {
-                throw new IdentityProvisioningException(
-                        "Unable to read the complete current FIRSTNAME/LASTNAME snapshot from WSO2 UserStore.", e);
-            }
+            // Empty composed values intentionally clear Stalwart displayName.
+            addReplace(operations, "displayName", joinName(given, family));
         }
 
         return patchDocument(operations);
@@ -1282,6 +1288,16 @@ public class StalwartSCIMProvisioningConnector extends AbstractOutboundProvision
         if (StringUtils.isBlank(uri) || attrs == null) return null;
         List<String> values = ProvisioningUtil.getClaimValues(attrs, uri, null);
         return CollectionUtils.isNotEmpty(values) ? values.get(0) : null;
+    }
+
+    /**
+     * Returns null only when the claim is absent. A present claim with an empty
+     * value is represented as an empty string so rename/clear events are retained.
+     */
+    private String mappedValueIfPresent(Map<ClaimMapping, List<String>> attrs, String uri) {
+        if (!hasClaim(attrs, uri)) return null;
+        List<String> values = ProvisioningUtil.getClaimValues(attrs, uri, null);
+        return CollectionUtils.isNotEmpty(values) ? StringUtils.defaultString(values.get(0)) : "";
     }
 
     private List<String> claimValues(Map<ClaimMapping, List<String>> attrs, String uri) {
