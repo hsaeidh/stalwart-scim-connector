@@ -47,7 +47,7 @@ public final class StalwartSCIMFactorySmokeTest {
         assertAuthoritativeGroupSnapshotOverridesDelta();
         assertGroupAddLoadsMissingEmailFromUserStore();
         assertCreate409ReconcilesByExternalId();
-        assertProfileNameDeltasReadFullSnapshot();
+        assertProfileNameDeltasPreferEventClaims();
         assertActiveClaimInvalidAndMissingFailClosed();
         assertTenantScopedResourceCache();
         assertBulkRetriesOnlyFailedOperation();
@@ -773,7 +773,7 @@ public final class StalwartSCIMFactorySmokeTest {
         }
     }
 
-    private static void assertProfileNameDeltasReadFullSnapshot() throws Exception {
+    private static void assertProfileNameDeltasPreferEventClaims() throws Exception {
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         List<JsonObject> patches = new java.util.concurrent.CopyOnWriteArrayList<>();
         AtomicReference<Map<String, String>> currentClaims = new AtomicReference<>(Map.of(
@@ -898,7 +898,7 @@ public final class StalwartSCIMFactorySmokeTest {
                 }
             }
             if (snapshotReads.get() != 3) {
-                throw new IllegalStateException("Only the missing counterpart claim should be read from UserStore for each one-part rename.");
+                throw new IllegalStateException("Only missing counterpart claims should be read from UserStore; event-supplied name parts must never trigger snapshot reads.");
             }
         } finally {
             if (serviceProxy != null) {
