@@ -22,6 +22,7 @@ import java.util.Map;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /** Executable smoke tests; this does not replace testing in a real WSO2/Stalwart deployment. */
 public final class StalwartSCIMFactorySmokeTest {
@@ -775,6 +776,9 @@ public final class StalwartSCIMFactorySmokeTest {
     private static void assertProfileNameDeltasReadFullSnapshot() throws Exception {
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         List<JsonObject> patches = new java.util.concurrent.CopyOnWriteArrayList<>();
+        AtomicReference<Map<String, String>> currentClaims = new AtomicReference<>(Map.of(
+                "http://wso2.org/claims/givenname", "OldFirst",
+                "http://wso2.org/claims/lastname", "OldLast"));
         server.createContext("/scim/v2", exchange -> {
             String path = exchange.getRequestURI().getPath();
             if ("POST".equals(exchange.getRequestMethod()) && path.endsWith("/.search")) {
@@ -792,6 +796,16 @@ public final class StalwartSCIMFactorySmokeTest {
             if ("PATCH".equals(exchange.getRequestMethod())) {
                 patches.add(JsonParser.parseString(new String(exchange.getRequestBody().readAllBytes(),
                         StandardCharsets.UTF_8)).getAsJsonObject());
+                // Simulate WSO2 UserStore becoming current after each successful event.
+                if (patches.size() == 1) {
+                    currentClaims.set(Map.of(
+                            "http://wso2.org/claims/givenname", "EventFirst",
+                            "http://wso2.org/claims/lastname", "OldLast"));
+                } else if (patches.size() == 2) {
+                    currentClaims.set(Map.of(
+                            "http://wso2.org/claims/givenname", "EventFirst",
+                            "http://wso2.org/claims/lastname", "EventLast"));
+                }
                 exchange.sendResponseHeaders(204, -1);
                 exchange.close();
                 return;
@@ -802,13 +816,17 @@ public final class StalwartSCIMFactorySmokeTest {
         server.start();
         Object serviceProxy = null;
         try {
-            Map<String, String> currentClaims = Map.of(
-                    "http://wso2.org/claims/givenname", "CurrentFirst",
-                    "http://wso2.org/claims/lastname", "CurrentLast");
+            AtomicInteger snapshotReads = new AtomicInteger();
             Object managerProxy = java.lang.reflect.Proxy.newProxyInstance(
                     org.wso2.carbon.user.api.UserStoreManager.class.getClassLoader(),
                     new Class[]{org.wso2.carbon.user.api.UserStoreManager.class},
-                    (proxy, method, args) -> "getUserClaimValues".equals(method.getName()) ? currentClaims : null);
+                    (proxy, method, args) -> {
+                        if ("getUserClaimValues".equals(method.getName())) {
+                            snapshotReads.incrementAndGet();
+                            return currentClaims.get();
+                        }
+                        return null;
+                    });
             Object realmProxy = java.lang.reflect.Proxy.newProxyInstance(
                     org.wso2.carbon.user.api.UserRealm.class.getClassLoader(),
                     new Class[]{org.wso2.carbon.user.api.UserRealm.class},
@@ -821,33 +839,66 @@ public final class StalwartSCIMFactorySmokeTest {
             PrivilegedCarbonContext.getThreadLocalCarbonContext().setTenantId(1);
             String base = "http://127.0.0.1:" + server.getAddress().getPort() + "/scim/v2";
             StalwartSCIMProvisioningConnector connector = newConnector(base, "INDIVIDUAL");
+
             Map<ClaimMapping, List<String>> firstOnly = new java.util.HashMap<>(claims(
                     "http://wso2.org/claims/username", "profile-user",
                     "http://wso2.org/claims/givenname", "EventFirst"));
             connector.provision(new ProvisioningEntity(ProvisioningEntityType.USER,
                     "profile-user", ProvisioningOperation.PATCH, firstOnly));
+
             Map<ClaimMapping, List<String>> lastOnly = new java.util.HashMap<>(claims(
                     "http://wso2.org/claims/username", "profile-user",
                     "http://wso2.org/claims/lastname", "EventLast"));
             connector.provision(new ProvisioningEntity(ProvisioningEntityType.USER,
                     "profile-user", ProvisioningOperation.PATCH, lastOnly));
+
+            // Both event values must win even if the UserStore snapshot is stale.
+            currentClaims.set(Map.of(
+                    "http://wso2.org/claims/givenname", "StaleFirst",
+                    "http://wso2.org/claims/lastname", "StaleLast"));
+            int readsBeforeBoth = snapshotReads.get();
+            Map<ClaimMapping, List<String>> bothNames = claims(
+                    "http://wso2.org/claims/username", "profile-user",
+                    "http://wso2.org/claims/givenname", "BothEventFirst",
+                    "http://wso2.org/claims/lastname", "BothEventLast");
+            connector.provision(new ProvisioningEntity(ProvisioningEntityType.USER,
+                    "profile-user", ProvisioningOperation.PATCH, bothNames));
+            if (snapshotReads.get() != readsBeforeBoth) {
+                throw new IllegalStateException("Both name parts supplied by the event must not trigger a UserStore read.");
+            }
+
             Map<ClaimMapping, List<String>> displayOnly = claims(
                     "http://wso2.org/claims/username", "profile-user",
                     "http://wso2.org/claims/displayname", "New Display");
             connector.provision(new ProvisioningEntity(ProvisioningEntityType.USER,
                     "profile-user", ProvisioningOperation.PATCH, displayOnly));
-            if (patches.size() != 3) {
-                throw new IllegalStateException("FIRSTNAME, LASTNAME and DISPLAYNAME must each independently trigger a profile PATCH.");
+
+            // A present-but-empty name claim is an explicit clear.
+            Map<ClaimMapping, List<String>> clearFirst = claims(
+                    "http://wso2.org/claims/username", "profile-user",
+                    "http://wso2.org/claims/givenname", "");
+            connector.provision(new ProvisioningEntity(ProvisioningEntityType.USER,
+                    "profile-user", ProvisioningOperation.PATCH, clearFirst));
+
+            if (patches.size() != 5) {
+                throw new IllegalStateException("FIRSTNAME, LASTNAME, both names, DISPLAYNAME and empty FIRSTNAME must each trigger a profile PATCH.");
             }
-            for (int i = 0; i < 2; i++) {
+            String[] expected = {
+                    "EventFirst OldLast",
+                    "EventFirst EventLast",
+                    "BothEventFirst BothEventLast",
+                    "New Display",
+                    "StaleLast"
+            };
+            for (int i = 0; i < expected.length; i++) {
                 JsonObject operation = patches.get(i).getAsJsonArray("Operations").get(0).getAsJsonObject();
-                if (!"CurrentFirst CurrentLast".equals(operation.get("value").getAsString())) {
-                    throw new IllegalStateException("A first/last-name delta must use the full current WSO2 UserStore snapshot.");
+                if (!expected[i].equals(operation.get("value").getAsString())) {
+                    throw new IllegalStateException("Unexpected displayName for rename event " + i
+                            + ": expected '" + expected[i] + "' but got '" + operation.get("value").getAsString() + "'.");
                 }
             }
-            JsonObject displayOperation = patches.get(2).getAsJsonArray("Operations").get(0).getAsJsonObject();
-            if (!"New Display".equals(displayOperation.get("value").getAsString())) {
-                throw new IllegalStateException("DISPLAYNAME-only change must be sent independently.");
+            if (snapshotReads.get() != 3) {
+                throw new IllegalStateException("Only the missing counterpart claim should be read from UserStore for each one-part rename.");
             }
         } finally {
             if (serviceProxy != null) {
@@ -856,7 +907,6 @@ public final class StalwartSCIMFactorySmokeTest {
             server.stop(0);
         }
     }
-
     private static void assertActiveClaimInvalidAndMissingFailClosed() throws Exception {
         String activeUri = "http://wso2.org/claims/accountEnabled";
         StalwartSCIMProvisioningConnector connector = newConnector(
