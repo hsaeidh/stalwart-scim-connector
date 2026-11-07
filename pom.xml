@@ -8,6 +8,17 @@
   <packaging>pom</packaging>
   <name>Stalwart SCIM Provisioning Connector</name>
   <description>Independent WSO2 Identity Server outbound provisioning connector for Stalwart SCIM.</description>
+  <url>https://github.com/hsaeidh/stalwart-scim-connector</url>
+  <organization>
+    <name>Stalwart SCIM Connector contributors</name>
+    <url>https://github.com/hsaeidh/stalwart-scim-connector</url>
+  </organization>
+  <scm>
+    <connection>scm:git:https://github.com/hsaeidh/stalwart-scim-connector.git</connection>
+    <developerConnection>scm:git:ssh://git@github.com/hsaeidh/stalwart-scim-connector.git</developerConnection>
+    <url>https://github.com/hsaeidh/stalwart-scim-connector</url>
+    <tag>HEAD</tag>
+  </scm>
   <modules><module>components/org.stalwart.identity.provisioning.connector.scim</module></modules>
   <repositories><repository><id>wso2-public</id><name>WSO2 Public Maven Repository</name><url>https://maven.wso2.org/nexus/content/groups/wso2-public/</url></repository></repositories>
   <properties>
