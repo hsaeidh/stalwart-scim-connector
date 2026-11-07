@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-VERSION="2.0.8-SNAPSHOT"
+VERSION="2.0.9-SNAPSHOT"
 BUNDLE_JAR="org.stalwart.identity.provisioning.connector.scim-${VERSION}.jar"
 BUNDLE_GLOB="org.stalwart.identity.provisioning.connector.scim-*.jar"
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -45,7 +45,7 @@ TOML_PATH="$WSO2_HOME/repository/conf/stalwart-scim-connector.toml"
 [[ -f "$JAR_PATH" ]] || fail "connector JAR not found: $JAR_PATH"
 command -v unzip >/dev/null 2>&1 || fail "unzip is required to verify the connector JAR."
 MANIFEST="$(unzip -p "$JAR_PATH" META-INF/MANIFEST.MF 2>/dev/null | tr -d '\r' || true)"
-grep -Eq '^Bundle-Version: 2\.0\.8([.-]SNAPSHOT|\.SNAPSHOT)?$' <<<"$MANIFEST" || fail "selected JAR is not version 2.0.8-SNAPSHOT."
+grep -Eq '^Bundle-Version: 2\.0\.8([.-]SNAPSHOT|\.SNAPSHOT)?$' <<<"$MANIFEST" || fail "selected JAR is not version 2.0.9-SNAPSHOT."
 grep -Eq '^Bundle-SymbolicName: org\.stalwart\.identity\.provisioning\.connector\.scim([;[:space:]]|$)' <<<"$MANIFEST" || fail "selected JAR does not have the expected Stalwart SCIM bundle symbolic name."
 
 printf '\nDetected installation target\n'
