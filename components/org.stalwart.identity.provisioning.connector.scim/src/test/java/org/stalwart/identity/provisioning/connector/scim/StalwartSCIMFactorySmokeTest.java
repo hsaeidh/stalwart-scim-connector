@@ -55,7 +55,7 @@ public final class StalwartSCIMFactorySmokeTest {
         assertProfileUpdateCannotChangeOrigin();
         assertNameCompositionAllowsMissingParts();
         assertDeleteDisablesAccount();
-        System.out.println("SMOKE TEST PASSED v2.0.8");
+        System.out.println("SMOKE TEST PASSED v2.0.9");
     }
 
     private static void assertTomlConfiguration() throws Exception {
